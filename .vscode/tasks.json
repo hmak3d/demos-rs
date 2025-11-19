@@ -1,0 +1,14 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Enable non-root debugging",
+            "type": "shell",
+            "osx": {
+                "command": "codesign -v -s - -f --entitlements =(echo -n '<?xml version=\"1.0\" encoding=\"UTF-8\"?> <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"https://www.apple.com/DTDs/PropertyList-1.0.dtd\"\> <plist version=\"1.0\"> <dict> <key>com.apple.security.get-task-allow</key> <true/> </dict> </plist>') $(find target -type f -perm -755)"
+            }
+        }
+    ]
+}
