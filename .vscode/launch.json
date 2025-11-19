@@ -7,10 +7,87 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "helloworld",
-            "program": "${workspaceFolder}/target/debug/helloworld",
+            "name": "Debug executable 'fasterthanlime_pin'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=fasterthanlime_pin",
+                    "--package=demos-rs"
+                ],
+                "filter": {
+                    "name": "fasterthanlime_pin",
+                    "kind": "bin"
+                }
+            },
             "args": [],
-            "preLaunchTask": "Enable non-root debugging",
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'fasterthanlime_pin'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=fasterthanlime_pin",
+                    "--package=demos-rs"
+                ],
+                "filter": {
+                    "name": "fasterthanlime_pin",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'helloworld'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=helloworld",
+                    "--package=demos-rs"
+                ],
+                "filter": {
+                    "name": "helloworld",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'helloworld'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=helloworld",
+                    "--package=demos-rs"
+                ],
+                "filter": {
+                    "name": "helloworld",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
             "cwd": "${workspaceFolder}"
         }
     ]
