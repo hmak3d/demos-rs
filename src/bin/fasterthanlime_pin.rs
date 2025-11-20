@@ -73,7 +73,7 @@ mod v3 {
     /// NB: The size of [ReadWrap] \[in the return returned by
     /// [AsyncReadExt::read_exact()]\] will _not directly_ include the size of [Sleep]
     /// but instead just a pointer to Sleep.
-    /// 
+    ///
     /// FIXME Answer: So if [ReadWrap] is on the stack, its [ReadWrap::sleep] is on the heap
     /// \[because Box is always on the heap\]?
     pub struct ReadWrap<R> {
@@ -212,11 +212,92 @@ mod v4 {
     }
 }
 
+/// Pass through to [tokio::io::AsyncRead] with delay but make wrapper *not* [Unpin]
+/// ... and use 3rd party macros to avoid "unsafe"
+mod v5 {
+    use super::*;
+    use pin_project_lite::pin_project;
+    use std::pin::{Pin, pin};
+    use std::task::{Context, Poll};
+    use std::time::Duration;
+    use tokio::fs::File;
+    use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+    use tokio::time::{self, Instant, Sleep};
+
+    pin_project! {
+        /// NB: The size of [ReadWrap] \[in the return returned by
+        /// [AsyncReadExt::read_exact()]\] will include the size of [Sleep]
+        ///
+        /// FIXME Answer: So if [ReadWrap] is on the stack, so will its [ReadWrap::sleep]?
+        pub struct ReadWrap<R> {
+            read: R,
+
+            // Make ReadWrap.project().sleep return a Pin<Sleep>
+            #[pin]
+            sleep: Sleep,
+        }
+    }
+
+    impl<R> ReadWrap<R> {
+        pub fn new(read: R) -> Self {
+            Self {
+                read,
+                sleep: time::sleep(Duration::from_secs(1)),
+            }
+        }
+    }
+
+    impl<R: AsyncRead + Unpin> AsyncRead for ReadWrap<R> {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let mut this = self.project();
+            match this.sleep.as_mut().poll(cx) {
+                Poll::Ready(_) => {
+                    // woke up => read into buffer
+                    this.sleep.reset(Instant::now() + Duration::from_secs(1));
+                    Pin::new(&mut this.read).poll_read(cx, buf)
+                }
+                // continue sleeping
+                Poll::Pending => Poll::Pending,
+            }
+        }
+    }
+
+    pub async fn do_it() -> Result<()> {
+        let f = File::open("/dev/urandom").await?;
+        let f_before_pin = ReadWrap::new(f);
+
+        // NB: Unlike v3, the usage of ReadWrap is more complicated
+        // FIXME Answer: Will ReadWrap be on stack as it does _not_ cross await points?
+        let mut f: Pin<&mut ReadWrap<File>> = pin!(f_before_pin);
+
+        // NB: Following
+        //      std::hint::black_box(f_before_pin);
+        // will *not* compile because pin!() at https://doc.rust-lang.org/beta/src/core/pin.rs.html#2035
+        // uses "super let" to move it to an inaccessible var
+
+        let mut buf = [0u8; 32];
+        let now = Instant::now();
+        let read_len = f.read_exact(&mut buf).await?;
+        println!(
+            "Read {} bytes {:?} after {:?}",
+            read_len,
+            buf,
+            now.elapsed()
+        );
+        Ok(())
+    }
+}
+
 #[tokio::main]
 pub async fn main() -> Result<()> {
     // v1::do_it().await?;
     // v2::do_it().await?;
     // v3::do_it().await?;
-    v4::do_it().await?;
+    // v4::do_it().await?;
+    v5::do_it().await?;
     Ok(())
 }
