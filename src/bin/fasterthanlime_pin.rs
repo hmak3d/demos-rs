@@ -167,6 +167,8 @@ mod v4 {
             cx: &mut Context<'_>,
             buf: &mut ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
+            // NB: See v5 which replaces "unsafe" with macro
+            // SAFETY: We never move out from ReadWrap. Instead, we only return Pin on borrowed fields.
             let (mut read, mut sleep) = unsafe {
                 let this = self.get_unchecked_mut();
                 (
@@ -188,16 +190,13 @@ mod v4 {
 
     pub async fn do_it() -> Result<()> {
         let f = File::open("/dev/urandom").await?;
-        let f_before_pin = ReadWrap::new(f);
+        let mut f = ReadWrap::new(f);
 
         // NB: Unlike v3, the usage of ReadWrap is more complicated
+        // NB: See v5 which replaces "unsafe" with macro
         // FIXME Answer: Will ReadWrap be on stack as it does _not_ cross await points?
-        let mut f: Pin<&mut ReadWrap<File>> = pin!(f_before_pin);
-
-        // NB: Following
-        //      std::hint::black_box(f_before_pin);
-        // will *not* compile because pin!() at https://doc.rust-lang.org/beta/src/core/pin.rs.html#2035
-        // uses "super let" to move it to an inaccessible var
+        // SAFETY: We trivially never move from ReadWrap because we shadow it (varname is "f") with a Pin<&mut ReadWrap>
+        let mut f: Pin<&mut ReadWrap<File>> = unsafe { Pin::new_unchecked(&mut f) };
 
         let mut buf = [0u8; 32];
         let now = Instant::now();
