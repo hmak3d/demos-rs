@@ -1,3 +1,3 @@
 # Description
 
-Experiments in Rust
+Explore Rust language with code snippets
