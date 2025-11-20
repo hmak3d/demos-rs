@@ -5,6 +5,7 @@
 use anyhow::Result;
 
 /// Read a file using vanilla [tokio::io::AsyncRead]
+#[expect(dead_code)]
 mod v1 {
     use super::*;
     use tokio::fs::File;
@@ -20,6 +21,7 @@ mod v1 {
 }
 
 /// Pass through to [tokio::io::AsyncRead]
+#[expect(dead_code)]
 mod v2 {
     use super::*;
     use std::pin::Pin;
@@ -61,6 +63,7 @@ mod v2 {
 /// \[which forces some of its !Unpin fields to go onto the heap\]
 ///
 /// FIXME Verify above statement is true
+#[expect(dead_code)]
 mod v3 {
     use super::*;
     use std::pin::Pin;
@@ -134,9 +137,10 @@ mod v3 {
 /// \[so that its !Unpin fields can stay on the stack\]
 ///
 /// FIXME Verify above statement is true
+#[expect(dead_code)]
 mod v4 {
     use super::*;
-    use std::pin::{Pin, pin};
+    use std::pin::Pin;
     use std::task::{Context, Poll};
     use std::time::Duration;
     use tokio::fs::File;
@@ -163,7 +167,7 @@ mod v4 {
 
     impl<R: AsyncRead + Unpin> AsyncRead for ReadWrap<R> {
         fn poll_read(
-            mut self: Pin<&mut Self>,
+            self: Pin<&mut Self>,
             cx: &mut Context<'_>,
             buf: &mut ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
@@ -216,7 +220,7 @@ mod v4 {
 mod v5 {
     use super::*;
     use pin_project_lite::pin_project;
-    use std::pin::{Pin, pin};
+    use std::pin::{pin, Pin};
     use std::task::{Context, Poll};
     use std::time::Duration;
     use tokio::fs::File;
