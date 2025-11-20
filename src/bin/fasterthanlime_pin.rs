@@ -14,7 +14,7 @@ mod v1 {
         let mut f = File::open("/dev/urandom").await?;
         let mut buf = [0u8; 32];
         let read_len = f.read_exact(&mut buf).await?;
-        println!("Read {} bytes {:?}", read_len, buf);
+        println!("v1 Read {} bytes {:?}", read_len, buf);
         Ok(())
     }
 }
@@ -52,7 +52,7 @@ mod v2 {
         let mut f: ReadWrap<File> = ReadWrap::new(f);
         let mut buf = [0u8; 32];
         let read_len = f.read_exact(&mut buf).await?;
-        println!("Read {} bytes {:?}", read_len, buf);
+        println!("v2 Read {} bytes {:?}", read_len, buf);
         Ok(())
     }
 }
@@ -121,7 +121,7 @@ mod v3 {
         let now = Instant::now();
         let read_len = f.read_exact(&mut buf).await?;
         println!(
-            "Read {} bytes {:?} after {:?}",
+            "v3 Read {} bytes {:?} after {:?}",
             read_len,
             buf,
             now.elapsed()
@@ -202,7 +202,7 @@ mod v4 {
         let now = Instant::now();
         let read_len = f.read_exact(&mut buf).await?;
         println!(
-            "Read {} bytes {:?} after {:?}",
+            "v4 Read {} bytes {:?} after {:?}",
             read_len,
             buf,
             now.elapsed()
@@ -282,7 +282,7 @@ mod v5 {
         let now = Instant::now();
         let read_len = f.read_exact(&mut buf).await?;
         println!(
-            "Read {} bytes {:?} after {:?}",
+            "v5 Read {} bytes {:?} after {:?}",
             read_len,
             buf,
             now.elapsed()
