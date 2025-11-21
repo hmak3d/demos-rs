@@ -66,9 +66,13 @@ mod v2 {
 }
 
 /// Pass through to [tokio::io::AsyncRead] with delay and making wrapper [Unpin]
-/// \[which forces some of its !Unpin fields to go onto the heap\]
+/// \[which forces some of its !Unpin fields to go onto the heap\].
 ///
 /// TODO Verify above statement is true
+///
+/// Recall that Box always puts what it points to on the heap
+///
+/// re: this [Google Doc] (https://docs.google.com/presentation/d/1q-c7UAyrUlM-eZyTo1pd8SZ0qwA_wYxmPZVOQkoDmH4/edit#slide=id.p)
 #[expect(dead_code)]
 mod v3 {
     use super::*;
