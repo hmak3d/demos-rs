@@ -4,6 +4,8 @@
 //! [article](https://rust-unofficial.github.io/too-many-lists)
 //! by using rust analyzer to reveal inlays for the types in the code
 
+// #![expect(clippy::unnecessary_lazy_evaluations)]
+
 use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
@@ -540,19 +542,43 @@ impl<'a, T> CursorMut<'a, T> {
     }
 
     pub fn peek_next(&mut self) -> Option<&mut T> {
-        unsafe {
-            self.cur
-                .and_then(|node| (*node.as_ptr()).back)
-                .map(|node| &mut (*node.as_ptr()).elem)
-        }
+        let next = if let Some(cur) = self.cur {
+            // SAFETY: *cur.as_ptr() can only be invalid if either:
+            // - list is being deleted from but no one can do that because we have &mut list
+            // - earlier list delete was not exception safe, but we won't let that happen 😉
+            unsafe { (*cur.as_ptr()).back }
+        } else {
+            // at ghost => wrap to front of list
+            self.list.front
+        };
+
+        // SAFETY: *next?.as_ptr() can only be invalid due to similar reasoning above
+        // SAFETY: Can return &mut to element because we have &mut list =>
+        // - No one else can change the list
+        // - No other &mut exist to the element (to get one, someone else needs to get &mut list, which they cannot)
+
+        // prev.map(|prev| &mut (*prev.as_ptr()).elem)
+        unsafe { Some(&mut (*next?.as_ptr()).elem) }
     }
 
     pub fn peek_prev(&mut self) -> Option<&mut T> {
-        unsafe {
-            self.cur
-                .and_then(|node| (*node.as_ptr()).front)
-                .map(|node| &mut (*node.as_ptr()).elem)
-        }
+        let prev = if let Some(cur) = self.cur {
+            // SAFETY: *cur.as_ptr() can only be invalid if either:
+            // - list is being deleted from but no one can do that because we have &mut list
+            // - earlier list delete was not exception safe, but we won't let that happen 😉
+            unsafe { (*cur.as_ptr()).front }
+        } else {
+            // at ghost => wrap to back of list
+            self.list.back
+        };
+
+        // SAFETY: *prev?.as_ptr() can only be invalid due to similar reasoning above
+        // SAFETY: Can return &mut to element because we have &mut list =>
+        // - No one else can change the list
+        // - No other &mut exist to the element (to get one, someone else needs to get &mut list, which they cannot)
+
+        // prev.map(|prev| &mut (*prev.as_ptr()).elem)
+        unsafe { Some(&mut (*prev?.as_ptr()).elem) }
     }
 
     pub fn split_before(&mut self) -> LinkedList<T> {
