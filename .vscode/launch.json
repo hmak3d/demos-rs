@@ -89,6 +89,21 @@
                 "preLaunchTask": "Enable non-root debugging"
             },
             "cwd": "${workspaceFolder}"
-        }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in lib",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--lib"
+                ]
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+        },
     ]
 }
