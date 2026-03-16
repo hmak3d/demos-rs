@@ -105,5 +105,26 @@
                 "preLaunchTask": "Enable non-root debugging"
             },
         },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'stacked_borrow'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=stacked_borrow",
+                    "--package=demos-rs"
+                ],
+                "filter": {
+                    "name": "stacked_borrow",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }
