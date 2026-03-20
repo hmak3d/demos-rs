@@ -12,7 +12,7 @@
                 "args": [
                     "build",
                     "--bin=fasterthanlime_pin",
-                    "--package=demos-rs"
+                    "--package=async_stuff"
                 ],
                 "filter": {
                     "name": "fasterthanlime_pin",
@@ -34,7 +34,7 @@
                     "test",
                     "--no-run",
                     "--bin=fasterthanlime_pin",
-                    "--package=demos-rs"
+                    "--package=async_stuff"
                 ],
                 "filter": {
                     "name": "fasterthanlime_pin",
@@ -93,11 +93,12 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in lib",
+            "name": "Debug unit tests in simple lib",
             "cargo": {
                 "args": [
                     "test",
-                    "--lib"
+                    "--lib",
+                    "--package=simple"
                 ]
             },
             "args": [],
@@ -113,7 +114,7 @@
                 "args": [
                     "build",
                     "--bin=stacked_borrow",
-                    "--package=demos-rs"
+                    "--package=simple"
                 ],
                 "filter": {
                     "name": "stacked_borrow",

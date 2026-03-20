@@ -1,0 +1,9 @@
+[package]
+name = "async_stuff"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true }
+pin-project-lite = { workspace = true }
+tokio = { workspace = true }
