@@ -7,6 +7,27 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug unit tests in executable 'memoize_fn'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=memoize_fn",
+                    "--package=simple"
+                ],
+                "filter": {
+                    "name": "memoize_fn",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "osx": {
+                "preLaunchTask": "Enable non-root debugging"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in simple lib",
             "cargo": {
                 "args": [
