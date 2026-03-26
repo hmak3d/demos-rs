@@ -1,0 +1,12 @@
+# rust-toolchain.toml
+#
+# Existence of this file makes everything in this workspace use nightly-2026-03-20-aarch64-apple-darwi toolchain instead of stable-aarch64-apple-darwin
+# re: rustup show | grep active
+
+[toolchain]
+# re: https://rust-lang.github.io/rustup-components-history/
+channel = "nightly-2026-03-20"
+
+# optional, but recommended to pin:
+# components = ["rustfmt", "clippy"]
+# targets = ["x86_64-unknown-linux-gnu"]
