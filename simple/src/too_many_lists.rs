@@ -4,7 +4,15 @@
 //! [article](https://rust-unofficial.github.io/too-many-lists)
 //! by using rust analyzer to reveal inlays for the types in the code
 
-// #![expect(clippy::unnecessary_lazy_evaluations)]
+// Silence lint
+#![expect(
+    clippy::mem_replace_with_default,
+    clippy::partialeq_ne_impl,
+    clippy::redundant_pattern_matching,
+    clippy::should_implement_trait,
+    mismatched_lifetime_syntaxes
+)]
+#![allow(dead_code)]
 
 use std::cmp::Ordering;
 use std::fmt::{self, Debug};

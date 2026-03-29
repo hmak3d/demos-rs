@@ -38,6 +38,9 @@ pub fn main() {
         assert_borrowed(s);
     }
 
+    // Regarding clippy, yeah, into_iter() is confusing on &[] [since it doesn't
+    // consume original source] but we're demoing a point
+    #[allow(clippy::into_iter_on_ref)]
     for s in slice.into_iter() {
         // s is &String in all Rust editions
         assert_borrowed(s);
