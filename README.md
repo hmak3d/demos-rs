@@ -16,6 +16,11 @@ Explore Rust language with code snippets
 cargo test --lib test_par
 
 # Run tests with nextest
+#
+# NB: --no-capture != --nocapture
+# re: https://nexte.st/docs/reporting/#displaying-live-test-output
+#
+# NB: --no-capture will run tests serially [instead of in parallel]
 cargo install cargo-nextest --version 0.9.128 --locked
 cargo nextest run --lib test_par
 
