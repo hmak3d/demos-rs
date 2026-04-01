@@ -1,6 +1,7 @@
 pub mod anon_lifetime;
 pub mod box_dyn_is_static;
 pub mod generic_implicit_sized;
+pub mod linked_list;
 pub mod to_ub_or_not_ub;
 pub mod too_many_lists;
 
