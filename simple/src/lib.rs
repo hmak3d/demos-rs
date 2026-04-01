@@ -12,21 +12,30 @@ mod tests {
 
     #[test]
     fn test_par1() {
+        println!("test_par1 start");
         std::thread::sleep(DELAY);
+        println!("test_par1 end");
     }
 
     #[test]
     fn test_par2() {
+        println!("test_par2 start");
         std::thread::sleep(DELAY);
+        println!("test_par2 end");
     }
 
     #[test]
     fn test_par3() {
+        panic!("bad");
+        println!("test_par3 start");
         std::thread::sleep(DELAY);
+        println!("test_par3 end");
     }
 
     #[test]
     fn test_par4() {
+        eprintln!("test_par4 start");
         std::thread::sleep(DELAY);
+        eprintln!("test_par4 end");
     }
 }
