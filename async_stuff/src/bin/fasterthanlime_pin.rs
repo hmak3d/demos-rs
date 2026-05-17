@@ -103,7 +103,7 @@ mod v3 {
         }
     }
 
-    impl<R: AsyncRead + Unpin> AsyncRead for ReadWrap<R> {
+    impl<R: AsyncRead> AsyncRead for ReadWrap<R> {
         fn poll_read(
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
