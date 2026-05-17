@@ -72,7 +72,7 @@ mod v2 {
 ///
 /// Recall that Box always puts what it points to on the heap
 ///
-/// re: this [Google Doc] (https://docs.google.com/presentation/d/1q-c7UAyrUlM-eZyTo1pd8SZ0qwA_wYxmPZVOQkoDmH4/edit#slide=id.p)
+/// re: this [Google Doc](https://docs.google.com/presentation/d/1q-c7UAyrUlM-eZyTo1pd8SZ0qwA_wYxmPZVOQkoDmH4/edit#slide=id.p)
 #[expect(dead_code)]
 mod v3 {
     use super::*;
