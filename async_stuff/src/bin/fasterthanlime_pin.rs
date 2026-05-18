@@ -1,6 +1,14 @@
 //! Explore the code examples in fasterthanlime "Pin and suffering"
 //! [article](https://fasterthanli.me/articles/pin-and-suffering) to understand
 //! [std::future::Future] and [std::pin]
+//!
+//! | version | underlying AsyncRead is Unpin? | wrapper ReadWrap is Unpin? | approach |
+//! | --- | --- | --- | --- |
+//! | [v1] | n/a | n/a | no wrapper |
+//! | [v2::ReadWrap] | ✅ yes | ✅ yes (via auto marker trait) | wraps AsyncRead |
+//! | [v3::ReadWrap] | ✅ yes | ✅ yes (via auto marker trait) | wraps AsyncRead w/ delays; box pin internal fields |
+//! | [v4::ReadWrap] | ✅ yes | ❌ no | wraps AsyncRead w/ delay _without_ bin pin |
+//! | [v5::ReadWrap] | ✅ yes / ❌ no | same as underlying AsyncRead ([pin_project_lite! macro](https://crates.io/crates/pin-project-lite) will [conditionally](v5/struct.ReadWrap.html#impl-Unpin-for-ReadWrap<R>) `impl Unpin` if underlying AsyncRead is Unpin) | wraps AsyncRead w/delay and using external crate |
 
 use anyhow::Result;
 // NB: Following import only needed for older Rust so that
