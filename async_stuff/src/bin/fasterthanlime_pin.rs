@@ -243,6 +243,7 @@ mod v5 {
         ///
         /// TODO Question: So if [ReadWrap] is on the stack, so will its [ReadWrap::sleep]?
         pub struct ReadWrap<R> {
+            #[pin]
             read: R,
 
             // Make ReadWrap.project().sleep return a Pin<Sleep>
@@ -260,7 +261,7 @@ mod v5 {
         }
     }
 
-    impl<R: AsyncRead + Unpin> AsyncRead for ReadWrap<R> {
+    impl<R: AsyncRead> AsyncRead for ReadWrap<R> {
         fn poll_read(
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
@@ -271,7 +272,7 @@ mod v5 {
                 Poll::Ready(_) => {
                     // woke up => read into buffer
                     this.sleep.reset(Instant::now() + Duration::from_secs(1));
-                    Pin::new(&mut this.read).poll_read(cx, buf)
+                    this.read.poll_read(cx, buf)
                 }
                 // continue sleeping
                 Poll::Pending => Poll::Pending,
