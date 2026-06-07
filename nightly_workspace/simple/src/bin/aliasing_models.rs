@@ -1,18 +1,18 @@
-//! Explore semantic aliasing models for unsafe Rust
+//! Explore aliasing models for unsafe Rust
 //! (i.e., the rules for avoiding undefined behavior during pointer manipulations in `unsafe` code)
 //!
-//! * re: newer [Tree Borrows paper](https://perso.crans.org/vanille/treebor/aux/preprint.pdf) 2025
-//! * re: older [Stack Borrows paper](https://doi.org/10.1145/3371109) 2020
-//! * re: [UB accross FFI boundaries paper](https://arxiv.org/pdf/2404.11671>) 2025
+//! * re: newer [Tree Borrows paper](https://perso.crans.org/vanille/treebor/aux/preprint.pdf) (2025)
+//! * re: older [Stacked Borrows paper](https://doi.org/10.1145/3371109) (2020)
+//! * re: [UB accross FFI boundaries paper](https://arxiv.org/pdf/2404.11671>) (2025)
 
 #![allow(unused)]
 
-mod tree_borrows_ok_but_not_stack_borrows {
+mod tree_borrows_ok_but_not_stacked_borrows {
     fn write(x: &mut i32) {
         *x = 42;
     }
 
-    /// This is okay under both Tree Borrows and Stack Borrows
+    /// This is okay under both Tree Borrows and Stacked Borrows
     ///
     /// See Example 4 in "Tree Borrows paper"
     pub fn test1_ok_all() {
@@ -22,8 +22,8 @@ mod tree_borrows_ok_but_not_stack_borrows {
         unsafe { *y = 24 }
     }
 
-    /// This is okay under Tree Borrows but not under Stack Borrows.
-    /// This is despite the fact that [test2_tree_borrow_ok_stack_borrow_bad()] is logically equivalent
+    /// This is okay under Tree Borrows but not under Stacked Borrows.
+    /// This is despite the fact that [test2_tree_borrow_ok_stacked_borrow_bad()] is logically equivalent
     /// to [test1_ok_all()]!
     ///
     /// ```sh
@@ -49,7 +49,7 @@ mod tree_borrows_ok_but_not_stack_borrows {
     /// 71 |         *x = 42;
     ///    |         ^^^^^^^
     ///    = note: stack backtrace:
-    ///            0: tree_borrows_ok_but_not_stack_borrows::test2_tree_borrow_ok_stack_borrow_bad
+    ///            0: tree_borrows_ok_but_not_stacked_borrows::test2_tree_borrow_ok_stacked_borrow_bad
     ///                at simple/src/bin/aliasing_models.rs:72:18: 72:25
     ///            1: main
     ///                at simple/src/bin/aliasing_models.rs:78:5: 78:83
@@ -66,7 +66,7 @@ mod tree_borrows_ok_but_not_stack_borrows {
     /// ```
     ///
     /// See Example 4 in [Tree Borrows paper](https://perso.crans.org/vanille/treebor/aux/preprint.pdf)
-    pub fn test2_tree_borrow_ok_stack_borrow_bad() {
+    pub fn test2_tree_borrow_ok_stacked_borrow_bad() {
         let x = &mut 0;
         let y = x as *mut _;
         *x = 42;
@@ -75,6 +75,6 @@ mod tree_borrows_ok_but_not_stack_borrows {
 }
 
 pub fn main() {
-    // tree_borrows_ok_but_not_stack_borrows::test1_ok_all();
-    tree_borrows_ok_but_not_stack_borrows::test2_tree_borrow_ok_stack_borrow_bad();
+    // tree_borrows_ok_but_not_stacked_borrows::test1_ok_all();
+    tree_borrows_ok_but_not_stacked_borrows::test2_tree_borrow_ok_stacked_borrow_bad();
 }
