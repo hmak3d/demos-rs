@@ -1,16 +1,21 @@
 //! Reimplement Iterator::flatten()
 //! Follow along Jon Gjenset ["Crust of Rust: Iterators"](https://www.youtube.com/watch?v=yozQ9C69pNs)
 
+use std::iter::Fuse;
+
 pub struct MyFlatten<I>
 where
     I: Iterator,
     I::Item: IntoIterator,
 {
     /// outer iterator; used to create inner iterator
-    outer: I,
+    outer: Fuse<I>,
 
-    /// inner iterator; used to produce actual iterator items
-    inner: Option<<I::Item as IntoIterator>::IntoIter>,
+    /// inner front iterator; used to produce actual iterator items going forward
+    front_inner: Option<<I::Item as IntoIterator>::IntoIter>,
+
+    /// inner back iterator; used to produce actual iterator items from backwards
+    back_inner: Option<<I::Item as IntoIterator>::IntoIter>,
 }
 
 impl<I> MyFlatten<I>
@@ -19,7 +24,11 @@ where
     I::Item: IntoIterator,
 {
     pub fn new(outer: I) -> Self {
-        Self { outer, inner: None }
+        Self {
+            outer: outer.fuse(),
+            front_inner: None,
+            back_inner: None,
+        }
     }
 }
 
@@ -33,17 +42,49 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // consume inner iter
-            if let Some(inner_mut) = &mut self.inner {
+            if let Some(inner_mut) = &mut self.front_inner {
                 if let Some(item) = inner_mut.next() {
                     return Some(item);
                 }
-                // exhausted inner => Make self.inner = None
-                self.inner = None;
+                // exhausted front inner => Make self.front_inner = None
+                self.front_inner = None;
             }
 
-            // inner is None => get another one from outer.next()
-            let inner = self.outer.next()?;
-            self.inner = Some(inner.into_iter());
+            // front inner is None => get another one from outer.next(), or when exhausted, then steal back_inner
+            let inner = match self.outer.next() {
+                // NB: Moving back_inner -> front_inner means that thrashing can occur when alternating between next()/next_back()
+                None => Some(self.back_inner.take()?),
+                Some(inner) => Some(inner.into_iter()),
+            };
+            self.front_inner = inner;
+        }
+    }
+}
+
+impl<I> DoubleEndedIterator for MyFlatten<I>
+where
+    I: DoubleEndedIterator,
+    I::Item: IntoIterator,
+    <I::Item as IntoIterator>::IntoIter: DoubleEndedIterator,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            // consume inner iter
+            if let Some(inner_mut) = &mut self.back_inner {
+                if let Some(item) = inner_mut.next_back() {
+                    return Some(item);
+                }
+                // exhausted back inner => Make self.back_inner = None
+                self.back_inner = None;
+            }
+
+            // back inner is None => get another one from outer.next(), or when exhausted, then steal front_inner
+            let inner = match self.outer.next_back() {
+                // NB: Moving front_inner -> back_inner means that thrashing can occur when alternating between next()/next_back()
+                None => Some(self.front_inner.take()?),
+                Some(inner) => Some(inner.into_iter()),
+            };
+            self.back_inner = inner;
         }
     }
 }
@@ -72,60 +113,160 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::FlatExt; // Decorator iterator to have Iterator::my_flatten()
-    use std::iter;
+    mod test_forward {
+        use super::super::FlatExt; // Decorator iterator to have Iterator::my_flatten()
+        use std::iter;
 
-    #[test]
-    fn test_empty_outer() {
-        assert_eq!(iter::empty::<Vec<Vec<i32>>>().my_flatten().next(), None);
+        #[test]
+        fn test_empty_outer() {
+            assert_eq!(iter::empty::<Vec<Vec<i32>>>().my_flatten().next(), None);
+        }
+
+        #[test]
+        fn test_empty_inner() {
+            assert_eq!(
+                iter::once(iter::empty::<Vec<i32>>()).my_flatten().next(),
+                None
+            );
+        }
+
+        #[test]
+        fn test_single() {
+            assert_eq!(
+                &vec![vec![1]].into_iter().my_flatten().collect::<Vec<_>>(),
+                &[1]
+            );
+        }
+
+        #[test]
+        fn test_single_outer_multi_inner() {
+            assert_eq!(
+                &vec![vec![1, 2]]
+                    .into_iter()
+                    .my_flatten()
+                    .collect::<Vec<_>>(),
+                &[1, 2]
+            );
+        }
+
+        #[test]
+        fn test_multi_outer_single_inner() {
+            assert_eq!(
+                &vec![vec![1], vec![2]]
+                    .into_iter()
+                    .my_flatten()
+                    .collect::<Vec<_>>(),
+                &[1, 2]
+            );
+        }
+
+        #[test]
+        fn test_multi_outer_multi_inner() {
+            assert_eq!(
+                &vec![vec![1, 2], vec![3, 4]]
+                    .into_iter()
+                    .my_flatten()
+                    .collect::<Vec<_>>(),
+                &[1, 2, 3, 4]
+            );
+        }
     }
 
-    #[test]
-    fn test_empty_inner() {
-        assert_eq!(
-            iter::once(iter::empty::<Vec<i32>>()).my_flatten().next(),
-            None
-        );
-    }
+    mod test_double {
+        use super::super::FlatExt; // Decorator iterator to have Iterator::my_flatten()
+        use std::iter;
 
-    #[test]
-    fn test_single() {
-        assert_eq!(
-            &vec![vec![1]].into_iter().my_flatten().collect::<Vec<_>>(),
-            &[1]
-        );
-    }
+        #[test]
+        fn test_empty_outer() {
+            let mut iter = iter::empty::<Vec<Vec<i32>>>().my_flatten();
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
 
-    #[test]
-    fn test_single_outer_multi_inner() {
-        assert_eq!(
-            &vec![vec![1, 2]]
-                .into_iter()
-                .my_flatten()
-                .collect::<Vec<_>>(),
-            &[1, 2]
-        );
-    }
+            // reversing access should not matter
+            let mut iter = iter::empty::<Vec<Vec<i32>>>().my_flatten();
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+        }
 
-    #[test]
-    fn test_multi_outer_single_inner() {
-        assert_eq!(
-            &vec![vec![1], vec![2]]
-                .into_iter()
-                .my_flatten()
-                .collect::<Vec<_>>(),
-            &[1, 2]
-        );
-    }
+        #[test]
+        fn test_empty_inner() {
+            let mut iter = iter::once(iter::empty::<Vec<i32>>()).my_flatten();
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
 
-    #[test]
-    fn test_multi_outer_multi_inner() {
-        assert_eq!(
-            &vec![vec![1, 2], vec![3, 4]]
-                .into_iter()
-                .my_flatten()
-                .collect::<Vec<_>>(),
-            &[1, 2, 3, 4]
-        );
+            // reversing access should not matter
+            let mut iter = iter::once(iter::empty::<Vec<i32>>()).my_flatten();
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+        }
+
+        #[test]
+        fn test_single() {
+            let mut iter = vec![vec![1]].into_iter().my_flatten();
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+
+            // reversing access should not matter
+            let mut iter = vec![vec![1]].into_iter().my_flatten();
+            assert_eq!(iter.next_back(), Some(1));
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+        }
+
+        #[test]
+        fn test_single_outer_multi_inner() {
+            let mut iter = vec![vec![1, 2]].into_iter().my_flatten();
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next_back(), Some(2));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+
+            let mut iter = vec![vec![1, 2]].into_iter().my_flatten();
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next(), Some(2));
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+
+            let mut iter = vec![vec![1, 2]].into_iter().my_flatten();
+            assert_eq!(iter.next_back(), Some(2));
+            assert_eq!(iter.next_back(), Some(1));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+        }
+
+        #[test]
+        fn test_multi_outer_single_inner() {
+            let mut iter = vec![vec![1], vec![2]].into_iter().my_flatten();
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next_back(), Some(2));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+
+            let mut iter = vec![vec![1], vec![2]].into_iter().my_flatten();
+            assert_eq!(iter.next_back(), Some(2));
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+        }
+
+        #[test]
+        fn test_multi_outer_multi_inner() {
+            let mut iter = vec![vec![1, 2], vec![3, 4]].into_iter().my_flatten();
+            assert_eq!(iter.next(), Some(1));
+            assert_eq!(iter.next_back(), Some(4));
+            assert_eq!(iter.next(), Some(2));
+            assert_eq!(iter.next_back(), Some(3));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+
+            let mut iter = vec![vec![1, 2], vec![3, 4]].into_iter().my_flatten();
+            assert_eq!(iter.next_back(), Some(4));
+            assert_eq!(iter.next_back(), Some(3));
+            assert_eq!(iter.next_back(), Some(2));
+            assert_eq!(iter.next_back(), Some(1));
+            assert_eq!(iter.next_back(), None);
+            assert_eq!(iter.next(), None);
+        }
     }
 }
