@@ -89,7 +89,7 @@ where
     }
 }
 
-/// [FlatExt] extension trait ... to make decorate all `Iterator<Item = IntoIterator>` to have `my_flatten()`
+/// [FlatExt] extension trait ... to decorate iterator to have Iterator::my_flatten() method
 pub trait FlatExt: Iterator {
     fn my_flatten(self) -> MyFlatten<Self>
     where
@@ -114,7 +114,7 @@ where
 #[cfg(test)]
 mod test {
     mod test_forward {
-        use super::super::FlatExt; // Decorator iterator to have Iterator::my_flatten()
+        use super::super::FlatExt; // Decorate iterator to have Iterator::my_flatten()
         use std::iter;
 
         #[test]
@@ -173,7 +173,7 @@ mod test {
     }
 
     mod test_double {
-        use super::super::FlatExt; // Decorator iterator to have Iterator::my_flatten()
+        use super::super::FlatExt; // Decorate iterator to have Iterator::my_flatten()
         use std::iter;
 
         #[test]
