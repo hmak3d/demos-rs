@@ -1,5 +1,5 @@
 //! Reimplement Iterator::flatten()
-//! Follow along Jon Gjenset ["Crust of Rust: Iterators"](https://www.youtube.com/watch?v=yozQ9C69pNs)
+//! Follow along Jon Gjengset ["Crust of Rust: Iterators"](https://www.youtube.com/watch?v=yozQ9C69pNs)
 
 use std::iter::Fuse;
 
