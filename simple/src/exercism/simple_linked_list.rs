@@ -1,14 +1,25 @@
 //! https://exercism.org/tracks/rust/exercises/simple-linked-list/edit
 
+type NodePointer<T> = Option<Box<Node<T>>>;
+
+struct Node<T> {
+    data: T,
+    next: NodePointer<T>,
+}
+
+impl<T> Node<T> {
+    fn new(data: T, next: NodePointer<T>) -> Self {
+        Self { data, next }
+    }
+}
+
 pub struct SimpleLinkedList<T> {
-    // Delete this field
-    // dummy is needed to avoid unused parameter error during compilation
-    dummy: ::std::marker::PhantomData<T>,
+    head: NodePointer<T>,
 }
 
 impl<T> SimpleLinkedList<T> {
     pub fn new() -> Self {
-        todo!()
+        Self { head: None }
     }
 
     // You may be wondering why it's necessary to have is_empty()
@@ -17,34 +28,52 @@ impl<T> SimpleLinkedList<T> {
     // whereas is_empty() is almost always cheap.
     // (Also ask yourself whether len() is expensive for SimpleLinkedList)
     pub fn is_empty(&self) -> bool {
-        todo!()
+        self.head.is_none()
     }
 
     pub fn len(&self) -> usize {
-        todo!()
+        let mut len = 0;
+        let mut cur = &self.head;
+        while let Some(next) = cur {
+            cur = &next.next;
+            len += 1;
+        }
+        len
     }
 
-    pub fn push(&mut self, _element: T) {
-        todo!()
+    pub fn push(&mut self, element: T) {
+        self.head = Some(Box::new(Node::new(element, self.head.take())));
     }
 
     pub fn pop(&mut self) -> Option<T> {
-        todo!()
+        let old_head = self.head.take()?;
+        self.head = old_head.next;
+        Some(old_head.data)
     }
 
     pub fn peek(&self) -> Option<&T> {
-        todo!()
+        self.head.as_deref().map(|val: &Node<T>| &val.data)
     }
 
     #[must_use]
-    pub fn rev(self) -> SimpleLinkedList<T> {
-        todo!()
+    pub fn rev(mut self) -> SimpleLinkedList<T> {
+        let mut res = SimpleLinkedList::new();
+        let mut cur = self.head.take();
+        while let Some(cur2) = cur {
+            res.push(cur2.data);
+            cur = cur2.next;
+        }
+        res
     }
 }
 
 impl<T> FromIterator<T> for SimpleLinkedList<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(_iter: I) -> Self {
-        todo!()
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut list = SimpleLinkedList::new();
+        for item in iter {
+            list.push(item);
+        }
+        list
     }
 }
 
@@ -60,8 +89,28 @@ impl<T> FromIterator<T> for SimpleLinkedList<T> {
 // of the vector as far as the tests are concerned.
 
 impl<T> From<SimpleLinkedList<T>> for Vec<T> {
-    fn from(mut _linked_list: SimpleLinkedList<T>) -> Vec<T> {
-        todo!()
+    fn from(list: SimpleLinkedList<T>) -> Vec<T> {
+        list.into_iter().collect()
+    }
+}
+
+impl<T> IntoIterator for SimpleLinkedList<T> {
+    type Item = T;
+
+    type IntoIter = SimpleLinkedListIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        SimpleLinkedListIter(self.rev())
+    }
+}
+
+pub struct SimpleLinkedListIter<T>(SimpleLinkedList<T>);
+
+impl<T> Iterator for SimpleLinkedListIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop()
     }
 }
 
@@ -74,7 +123,6 @@ mod tests {
         assert_eq!(list.len(), 0, "list's length must be 0");
     }
     #[test]
-    #[ignore]
     fn push_increments_length() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         list.push(1);
@@ -83,7 +131,6 @@ mod tests {
         assert_eq!(list.len(), 2, "list's length must be 2");
     }
     #[test]
-    #[ignore]
     fn pop_decrements_length() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         list.push(1);
@@ -94,7 +141,6 @@ mod tests {
         assert_eq!(list.len(), 0, "list's length must be 0");
     }
     #[test]
-    #[ignore]
     fn is_empty() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         assert!(list.is_empty(), "List wasn't empty on creation");
@@ -120,7 +166,6 @@ mod tests {
         }
     }
     #[test]
-    #[ignore]
     fn pop_returns_head_element_and_removes_it() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         list.push(1);
@@ -130,7 +175,6 @@ mod tests {
         assert_eq!(list.pop(), None, "No element should be contained in list");
     }
     #[test]
-    #[ignore]
     fn peek_returns_reference_to_head_element_but_does_not_remove_it() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         assert_eq!(list.peek(), None, "No element should be contained in list");
@@ -145,7 +189,6 @@ mod tests {
         assert_eq!(list.peek(), None, "No element should be contained in list");
     }
     #[test]
-    #[ignore]
     fn from_slice() {
         let mut array = vec!["1", "2", "3", "4"];
         let mut list: SimpleLinkedList<_> = array.drain(..).collect();
@@ -155,7 +198,6 @@ mod tests {
         assert_eq!(list.pop(), Some("1"));
     }
     #[test]
-    #[ignore]
     fn reverse() {
         let mut list: SimpleLinkedList<u32> = SimpleLinkedList::new();
         list.push(1);
@@ -168,7 +210,6 @@ mod tests {
         assert_eq!(rev_list.pop(), None);
     }
     #[test]
-    #[ignore]
     fn into_vector() {
         let mut v = Vec::new();
         let mut s = SimpleLinkedList::new();
@@ -177,6 +218,7 @@ mod tests {
             s.push(i);
         }
         let s_as_vec: Vec<i32> = s.into();
+        // let s_as_vec: Vec<i32> = s.into_iter().collect();
         assert_eq!(v, s_as_vec);
     }
 }
