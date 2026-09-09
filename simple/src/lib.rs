@@ -3,6 +3,7 @@ pub mod box_dyn_is_static;
 pub mod exercism;
 pub mod flat_iter;
 pub mod generic_implicit_sized;
+pub mod robot_name;
 pub mod to_ub_or_not_ub;
 pub mod too_many_lists;
 
