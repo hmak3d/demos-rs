@@ -20,4 +20,5 @@
 //         = note: this compiler was built on 2026-03-19; consider upgrading it if it is out of date
 #![feature(fn_traits)]
 
+pub mod exercism;
 pub mod memoize_fn;
