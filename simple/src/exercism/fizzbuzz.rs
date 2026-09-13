@@ -3,16 +3,24 @@
 //! A Matcher is a single rule of fizzbuzz: given a function on T, should
 //! a word be substituted in? If yes, which word?
 
-// pub struct Matcher<T>(Fn(T) -> Option<&'static str>);
-pub struct Matcher<'a, T>(Box<dyn Fn(T) -> Option<&'a str> + 'a>);
+use std::ops::Rem;
 
-impl<'a, T> Matcher<'a, T> {
-    pub fn new<F>(is_match: F, replacement: &'a str) -> Matcher<'a, T>
-    where
-        F: Fn(T) -> bool,
-        F: 'a,
-    {
-        Self(Box::new(move |val: T| is_match(val).then_some(replacement)))
+// pub struct Matcher<T>(Fn(T) -> Option<&'static str>);
+pub struct Matcher<T> {
+    is_match: fn(T) -> bool,
+    replacement: &'static str,
+}
+
+impl<T> Matcher<T> {
+    pub fn new(is_match: fn(T) -> bool, replacement: &'static str) -> Self {
+        Self {
+            is_match,
+            replacement,
+        }
+    }
+
+    pub fn get_replacement(&self, val: T) -> Option<&'static str> {
+        (self.is_match)(val).then_some(self.replacement)
     }
 }
 
@@ -25,18 +33,12 @@ impl<'a, T> Matcher<'a, T> {
 /// here because it's a simpler interface for students to implement.
 ///
 /// Also, it's a good excuse to try out using impl trait.
-pub struct Fizzy<'a, T>
-where
-    T: Copy,
-{
+pub struct Fizzy<T> {
     /// matcher rules to apply
-    matchers: Vec<Matcher<'a, T>>,
+    matchers: Vec<Matcher<T>>,
 }
 
-impl<'a, T> Fizzy<'a, T>
-where
-    T: ToString + Copy,
-{
+impl<T> Fizzy<T> {
     #[expect(clippy::new_without_default)] // Don't complain that Default should be impl for Fizzy
     pub fn new() -> Self {
         Self {
@@ -46,7 +48,7 @@ where
 
     // feel free to change the signature to `mut self` if you like
     #[must_use]
-    pub fn add_matcher(self, matcher: Matcher<'a, T>) -> Self {
+    pub fn add_matcher(self, matcher: Matcher<T>) -> Self {
         let mut matchers = self.matchers;
         matchers.push(matcher);
         Self { matchers }
@@ -56,27 +58,30 @@ where
     pub fn apply<I>(self, src_iter: I) -> impl Iterator<Item = String>
     where
         I: Iterator<Item = T>,
+        T: Copy + ToString,
     {
         // "move" for self.matchers
-        src_iter.map(move |item| {
+        src_iter.map(move |item: T| -> String {
             self.matchers
                 .iter()
-                .filter_map(|f| f.0(item))
+                // item must be Copy here
+                .filter_map(|matcher| matcher.get_replacement(item))
+                // promote &str to String so we can append to it below
                 .map(String::from)
                 .reduce(|mut accum: String, cur: String| -> String {
                     accum.push_str(&cur);
                     accum
                 })
+                // item must be ToString here
                 .unwrap_or_else(|| item.to_string())
         })
     }
 }
 
 /// convenience function: return a Fizzy which applies the standard fizz-buzz rules
-pub fn fizz_buzz<T>() -> Fizzy<'static, T>
+pub fn fizz_buzz<T>() -> Fizzy<T>
 where
-    T: std::ops::Rem<T> + Copy,
-    <T as std::ops::Rem<T>>::Output: PartialEq<T>,
+    T: Rem<Output = T> + Copy + PartialEq<T>,
     T: ToString + From<u8>,
 {
     Fizzy::new()
