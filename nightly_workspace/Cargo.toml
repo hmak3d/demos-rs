@@ -16,3 +16,4 @@ edition = "2024"
 # [lints.clippy]
 
 [workspace.dependencies]
+rand = "0.10.2"
