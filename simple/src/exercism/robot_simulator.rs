@@ -8,6 +8,23 @@ pub enum Direction {
     West,
 }
 
+impl TryFrom<usize> for Direction {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Direction::North),
+            1 => Ok(Direction::East),
+            2 => Ok(Direction::South),
+            3 => Ok(Direction::West),
+            _ => Err("bad direction"),
+        }
+    }
+}
+
+const DIRECTION_COUNT: usize = 4;
+const _: () = assert!(Direction::West as usize == DIRECTION_COUNT - 1);
+
 pub struct Robot {
     x: i32,
     y: i32,
@@ -21,35 +38,37 @@ impl Robot {
 
     #[must_use]
     pub fn turn_right(self) -> Self {
-        let d = match self.d {
-            Direction::North => Direction::East,
-            Direction::East => Direction::South,
-            Direction::South => Direction::West,
-            Direction::West => Direction::North,
-        };
-        Self { d, ..self }
+        Self {
+            d: ((self.d as usize + 1) % DIRECTION_COUNT)
+                .try_into()
+                .expect("turn right math should stay in enum range"),
+            ..self
+        }
     }
 
     #[must_use]
     pub fn turn_left(self) -> Self {
-        let d = match self.d {
-            Direction::North => Direction::West,
-            Direction::East => Direction::North,
-            Direction::South => Direction::East,
-            Direction::West => Direction::South,
-        };
-        Self { d, ..self }
+        Self {
+            d: ((self.d as usize + (DIRECTION_COUNT - 1)) % DIRECTION_COUNT)
+                .try_into()
+                .expect("turn left math should stay in enum range"),
+            ..self
+        }
     }
 
     #[must_use]
     pub fn advance(self) -> Self {
-        let (x, y) = match self.d {
-            Direction::North => (self.x, self.y + 1),
-            Direction::East => (self.x + 1, self.y),
-            Direction::South => (self.x, self.y - 1),
-            Direction::West => (self.x - 1, self.y),
+        let (d_x, d_y) = match self.d {
+            Direction::North => (0, 1),
+            Direction::East => (1, 0),
+            Direction::South => (0, -1),
+            Direction::West => (-1, 0),
         };
-        Self { x, y, ..self }
+        Self {
+            x: self.x + d_x,
+            y: self.y + d_y,
+            ..self
+        }
     }
 
     #[must_use]
