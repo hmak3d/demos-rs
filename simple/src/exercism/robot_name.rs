@@ -1,31 +1,81 @@
 //! re: https://exercism.org/tracks/rust/exercises/robot-name/edit
 
-use rand::Rng;
+use rand::{Rng, RngExt};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 /// A `RobotFactory` is responsible for ensuring that all robots produced by
 /// it have a unique name. Robots from different factories can have the same
 /// name.
-pub struct RobotFactory;
+pub struct RobotFactory {
+    assigned_names: Rc<RefCell<AssignedNames>>,
+}
 
-pub struct Robot;
+pub struct Robot {
+    assigned_names: Rc<RefCell<AssignedNames>>,
+    name: String,
+}
 
-impl RobotFactory {
-    pub fn new() -> Self {
-        todo!("Create a new robot factory")
+struct AssignedNames {
+    names: HashSet<String>,
+}
+
+impl AssignedNames {
+    /// Generate new unique name
+    fn generate_name<R: Rng>(&mut self, rng: &mut R) -> String {
+        let s = loop {
+            let s: String = (0..5)
+                .map(|i| match i {
+                    0..2 => rng.random_range('A'..='Z'),
+                    _ => rng.random_range('0'..='9'),
+                })
+                .collect();
+            if !self.names.contains(&s) {
+                break s;
+            }
+        };
+        self.names.insert(s.clone());
+        s
     }
 
-    pub fn new_robot<R: Rng>(&mut self, _rng: &mut R) -> Robot {
-        todo!("Create a new robot with a unique name")
+    /// Remove/retire a generated name
+    fn remove_name(&mut self, old_name: &str) {
+        self.names.remove(old_name);
+    }
+
+    fn new() -> Self {
+        Self {
+            names: HashSet::new(),
+        }
+    }
+}
+
+impl RobotFactory {
+    #[expect(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            assigned_names: Rc::new(RefCell::new(AssignedNames::new())),
+        }
+    }
+
+    pub fn new_robot<R: Rng>(&mut self, rng: &mut R) -> Robot {
+        Robot {
+            assigned_names: Rc::clone(&self.assigned_names),
+            name: self.assigned_names.borrow_mut().generate_name(rng),
+        }
     }
 }
 
 impl Robot {
     pub fn name(&self) -> &str {
-        todo!("Return a reference to the robot's name");
+        self.name.as_ref()
     }
 
-    pub fn reset<R: Rng>(&mut self, _rng: &mut R) {
-        todo!("Assign a new unique name to the robot");
+    pub fn reset<R: Rng>(&mut self, rng: &mut R) {
+        let mut assigned_names = self.assigned_names.borrow_mut();
+        assigned_names.remove_name(&self.name);
+        self.name = assigned_names.generate_name(rng);
     }
 }
 
