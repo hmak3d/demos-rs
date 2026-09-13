@@ -1,5 +1,6 @@
 pub mod anon_lifetime;
 pub mod box_dyn_is_static;
+pub mod exercism;
 pub mod flat_iter;
 pub mod generic_implicit_sized;
 pub mod to_ub_or_not_ub;
