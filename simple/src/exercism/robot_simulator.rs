@@ -8,39 +8,70 @@ pub enum Direction {
     West,
 }
 
-pub struct Robot;
+pub struct Robot {
+    x: i32,
+    y: i32,
+    d: Direction,
+}
 
 impl Robot {
     pub fn new(x: i32, y: i32, d: Direction) -> Self {
-        todo!("Create a robot at (x, y) ({x}, {y}) facing {d:?}")
+        Self { x, y, d }
     }
 
     #[must_use]
     pub fn turn_right(self) -> Self {
-        todo!()
+        let d = match self.d {
+            Direction::North => Direction::East,
+            Direction::East => Direction::South,
+            Direction::South => Direction::West,
+            Direction::West => Direction::North,
+        };
+        Self { d, ..self }
     }
 
     #[must_use]
     pub fn turn_left(self) -> Self {
-        todo!()
+        let d = match self.d {
+            Direction::North => Direction::West,
+            Direction::East => Direction::North,
+            Direction::South => Direction::East,
+            Direction::West => Direction::South,
+        };
+        Self { d, ..self }
     }
 
     #[must_use]
     pub fn advance(self) -> Self {
-        todo!()
+        let (x, y) = match self.d {
+            Direction::North => (self.x, self.y + 1),
+            Direction::East => (self.x + 1, self.y),
+            Direction::South => (self.x, self.y - 1),
+            Direction::West => (self.x - 1, self.y),
+        };
+        Self { x, y, ..self }
     }
 
     #[must_use]
     pub fn instructions(self, instructions: &str) -> Self {
-        todo!("Follow the given sequence of instructions: {instructions}")
+        let mut cur = self;
+        for step in instructions.chars() {
+            cur = match step {
+                'R' => cur.turn_right(),
+                'L' => cur.turn_left(),
+                'A' => cur.advance(),
+                _ => unreachable!(),
+            }
+        }
+        cur
     }
 
     pub fn position(&self) -> (i32, i32) {
-        todo!()
+        (self.x, self.y)
     }
 
     pub fn direction(&self) -> &Direction {
-        todo!()
+        &self.d
     }
 }
 
