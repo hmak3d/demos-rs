@@ -229,7 +229,10 @@ mod tests {
         }
         assert_eq!(list.len(), 20);
         let expected = (0..5).chain(0..10).chain(5..10);
-        assert!(expected.eq(list.iter().cloned()));
+        assert_eq!(
+            expected.collect::<Vec<_>>(),
+            list.iter().cloned().collect::<Vec<_>>()
+        );
     }
     #[test]
     fn cursor_insert_before_in_middle() {
@@ -244,7 +247,10 @@ mod tests {
         }
         assert_eq!(list.len(), 20);
         let expected = (0..5).chain(0..10).chain(5..10);
-        assert!(expected.eq(list.iter().cloned()));
+        assert_eq!(
+            expected.collect::<Vec<_>>(),
+            list.iter().cloned().collect::<Vec<_>>()
+        );
     }
     // "iterates" via next() and checks that it visits the right elements
     #[test]
