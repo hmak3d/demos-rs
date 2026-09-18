@@ -1,24 +1,47 @@
 //! https://exercism.org/tracks/rust/exercises/triangle/edit
 
-pub struct Triangle;
+use std::ops::Add;
 
-impl Triangle {
-    pub fn build(sides: [u64; 3]) -> Option<Triangle> {
-        todo!(
-            "Construct new Triangle from following sides: {sides:?}. Return None if the sides are invalid."
-        );
+pub struct Triangle<T>([T; 3]);
+
+impl<T> Triangle<T>
+where
+    T: PartialOrd + Add<Output = T> + Copy + PartialEq,
+{
+    pub fn build(mut sides: [T; 3]) -> Option<Triangle<T>> {
+        if sides
+            .iter()
+            .enumerate()
+            .all(|(i, side)| *side < (sides[(i + 1) % sides.len()] + sides[(i + 2) % sides.len()]))
+        {
+            // Sort sides to speed up is_*() calls.
+            // Can't use normal sort() due to f64 note being full Ord.
+            sides.sort_unstable_by(|a, b| a.partial_cmp(b).expect("NaN cannot be a side"));
+            Some(Triangle(sides))
+        } else {
+            None
+        }
     }
 
     pub fn is_equilateral(&self) -> bool {
-        todo!("Determine if the Triangle is equilateral.");
+        // Every side is equal to all other sides.
+        // Since sides are sorted, only first/last needs to be compared.
+        self.0[0] == self.0[2]
     }
 
     pub fn is_scalene(&self) -> bool {
-        todo!("Determine if the Triangle is scalene.");
+        self.0
+            .iter()
+            .enumerate()
+            .skip(1)
+            // Every side is diff from all other sides
+            .all(|(i, side)| *side != self.0[i - 1])
     }
 
     pub fn is_isosceles(&self) -> bool {
-        todo!("Determine if the Triangle is isosceles.");
+        // At least 2 sides are equal.
+        // Equilateral is superset of isosceles.
+        !self.is_scalene()
     }
 }
 
