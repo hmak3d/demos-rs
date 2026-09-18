@@ -1,29 +1,39 @@
-//! re: https://exercism.org/tracks/rust/exercises/doubly-linked-list/edit
+//! re: <https://exercism.org/tracks/rust/exercises/doubly-linked-list/edit>
 // this module adds some functionality based on the required implementations
 // here like: `LinkedList::pop_back` or `Clone for LinkedList<T>`
 // You are free to use anything in it, but it's mainly for the test framework.
 
+use std::fmt::Debug;
+use std::iter::FusedIterator;
+use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
-type NonNullNodePtr<T> = NonNull<Node<T>>;
-type NodePtr<T> = Option<NonNullNodePtr<T>>;
+/// A non-null pointer [to a node].
+///
+/// The usage of "ghost node" enables this to be non-null
+/// (see [LinkedList] docs).
+///
+/// Dropping this will _not_ release/drop node resources.
+/// For that, you'd need to use [ToNodeExt::into_boxed_node].
+type Link<T> = NonNull<Node<T>>;
 
-/// For converting non-null Node pointer to a Node (owned or ref).
-/// Node ref is useful to access the contents behind the pointer.
-/// Owned Node is useful for releasing/dropping resources.
+/// For converting [Link] to an owned [Node].
+/// Is used to release/drop resources.
 trait ToNodeExt<T> {
-    /// Convert [NonNullNodePtr] (aka NodePtr.unwrap()) -> [Box<Node<T>>] (so Box can be dropped)
+    /// Convert [Link] -> [`Box<Node<T>>`] (so Box can be dropped)
     ///
-    /// Is reverse of [Node::into_node_ptr]
+    /// Is reverse of [Node::into_link]
     ///
     /// # Safety
     ///
-    /// * The pointer is not concurrently being used like as an argument to [Self::as_node_mut].
-    /// * The original pointer must have come from [Node::into_node_ptr].
+    /// * The link is not concurrently being borrowed
+    ///   (e.g., copies are passed to [NonNull::as_mut]/etc and
+    ///   the returned lifetimes are still active)
+    /// * The original link must have come from [Node::into_link].
     unsafe fn into_boxed_node(self) -> Box<Node<T>>;
 }
 
-/// Add a conversion method to all non-null Node pointers
+/// Add a conversion method to all [Link]
 impl<T> ToNodeExt<T> for NonNull<Node<T>> {
     unsafe fn into_boxed_node(self) -> Box<Node<T>> {
         // SAFETY: See doc comment for trait
@@ -31,74 +41,259 @@ impl<T> ToNodeExt<T> for NonNull<Node<T>> {
     }
 }
 
-#[derive(Default)]
+/// A node in the linked list.
+/// Holds the actual element value/data.
+///
+/// The main factory methods are [Node::new_link] and [Node::new_ghost_link]
 struct Node<T> {
-    data: T,
-    next: NodePtr<T>,
-    prev: NodePtr<T>,
+    /// Element value/data
+    ///
+    /// This is [`MaybeUninit<T>`] instead of `T` to accomodate the ghost node
+    ///
+    /// If `is_ghost` == true => the value is initialized.
+    /// `data.assume_init*()` family of methods can be safetly called.
+    ///
+    /// If `is_ghost` == false => the value is uninitialized.
+    /// It is UB/illegal to call `data.assume_init*()`
+    data: MaybeUninit<T>,
+    prev: Link<T>,
+    next: Link<T>,
+    is_ghost: bool,
+}
+
+impl<T> Debug for Node<T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res = f.debug_struct("Node");
+        if !self.is_ghost {
+            // SAFETY: Data exists because this is not a ghost node
+            res.field("data", unsafe { self.data.assume_init_ref() });
+        }
+        res.field("prev", &self.prev)
+            .field("next", &self.next)
+            .finish()
+    }
 }
 
 impl<T> Node<T> {
-    fn new(data: T) -> Box<Node<T>> {
+    /// Create [Node] holding actual data, then return new [Link] pointing to it.
+    ///
+    /// This calls [Node::into_link] internally so the return value
+    /// satisfies some of the safety requirements of the argument passed to
+    /// [ToNodeExt::into_boxed_node].
+    ///
+    /// ATTN: Callers must eventually call [ToNodeExt::into_boxed_node]
+    /// and then [Node::into_data] to avoid release leaks. Simply dropping
+    /// [Link] is insufficient.
+    fn new_link(data: T, prev: Link<T>, next: Link<T>) -> Link<T> {
         Box::new(Self {
-            data,
-            next: None,
-            prev: None,
+            data: MaybeUninit::new(data),
+            prev,
+            next,
+            is_ghost: false,
         })
+        .into_link()
     }
 
-    /// Convert [Box<Node<T>>] -> [NodePtr]
+    /// Create ghost [Node] holding, then return new [Link] pointing to it.
+    ///
+    /// This calls [Node::into_link] internally so the return value
+    /// satisfies some of the safety requirements of the argument passed to
+    /// [ToNodeExt::into_boxed_node].
+    ///
+    /// ATTN: Callers must eventually call [ToNodeExt::into_boxed_node]
+    /// and then [Node::into_data] to avoid release leaks. Simply dropping
+    /// [Link] is insufficient.
+    ///
+    /// # Safety
+    ///
+    /// This method is safe, but you need to be careful.
+    /// Since the return value is self pointing, you must not overlap
+    /// access to `my_ref = returned_link.as_mut()` and `my_ref.prev.as_mut()`.
+    /// Overlapping `my_ref` and `my_ref.prev`-read is okay since latter is raw
+    /// pointer.
+    fn new_ghost_link() -> Link<T> {
+        let node = Box::new(Self {
+            data: MaybeUninit::uninit(),
+            prev: NonNull::dangling(), // temporary dangling points will be overwritten below
+            next: NonNull::dangling(),
+            is_ghost: true,
+        });
+
+        let mut link = node.into_link();
+
+        // Make node point to itself
+        // SAFETY: link is aligned because it came from Node::into_link().
+        // No other &mut exists in this method.
+        let node_mut = unsafe { link.as_mut() };
+        node_mut.prev = link;
+        node_mut.next = link;
+
+        // ATTN: *Must* return the same "link" used to patch the
+        // NonNull::dangling().
+        //
+        // It is important that _both_ the return value + prev/next pointers
+        // have same pointer provenance.
+        // - For stacked borrows, they should be at the same level in the borrow stack
+        // - For tree borrows, references derived from them must not have overlapping
+        //   lifetimes. insert_*() and take() methods must guarantee this.
+        // Otherwise, UB will result if you are not careful modifying the ghost node
+        // [which starts off as a self pointing struct].
+        //
+        // For example, do *not* return link.into_boxed_node().into_link() even though
+        // it points to same address as link.
+
+        link
+    }
+
+    /// Convert [`Box<Node<T>>`] -> [Link]
     ///
     /// Is useful for:
     /// - preventing Box from being automatically dropped (we want to do it manually)
-    /// - hiding lifetime checks from borrow check (as we will do this manually) w/ unsafe code
+    /// - hiding lifetime checks from borrow check (as we will do this manually w/ unsafe code)
     ///
-    /// Is reverse of [ToNode::into_boxed_node]
+    /// Is reverse of [ToNodeExt::into_boxed_node]
     ///
-    /// The resulting pointer will be properly aligned and non-null,
-    /// so `into_node_ptr().unwrap()` will always return [NonNullNodePtr].
-    fn into_node_ptr(self: Box<Node<T>>) -> NodePtr<T> {
+    /// The resulting link/pointer will be properly aligned and non-null
+    ///
+    /// Also see [Node::new_link] and [Node::new_ghost_link]
+    fn into_link(self: Box<Node<T>>) -> Link<T> {
         // SAFETY: *mut T can't be null because Box::into_raw() isn't
-        Some(unsafe { NonNull::new_unchecked(Box::into_raw(self)) })
+        unsafe { NonNull::new_unchecked(Box::into_raw(self)) }
+    }
+
+    /// Move data out of Node
+    ///
+    /// This must always be called to avoid resource leaks
+    fn into_data(self) -> Option<T> {
+        if self.is_ghost {
+            None
+        } else {
+            // SAFETY: Node was created by Node::new_link(), which means there is
+            // actual data to move out
+            Some(unsafe { self.data.assume_init() })
+        }
     }
 }
 
-#[derive(Default)]
+// NB: Cannot implement Drop because of Node::into_data() tries to move out [non-Copy] self.data
+// which is illegal because drop() takes &mut self
+// impl<T> Drop for Node<T> {
+//     fn drop(&mut self) {
+//         if !self.is_ghost {
+//             // SAFETY: Node was created by Node::new_link(), which means that there
+//             // actual data to drop
+//             // NB: Cannot call drop(self.data.assume_init()) because we cannot
+//             // move the data out of the struct _and_ T does not impl Copy
+//             unsafe { self.data.assume_init_drop() };
+//             self.is_ghost = true;
+//         }
+//     }
+// }
+
+/// A linked list of a sequence of nodes with links/pointers to each other going
+/// in both directions. We hide [from Rust] the ownership of the nodes during inserts
+/// and unhide them [in unsafe code] during take/removal.
+///
+/// ## Ghost node
+///
+/// A internal dummy "ghost" node is used to connect the tail node to the head
+/// node forming a cycle.
+/// All empty [LinkedList] start with 1 ghost node.
+///
+/// ### Advantages:
+/// - Reduces edges case in the logic to insert/remove nodes
+/// - Links between nodes can be non-null. No need to deal with [Option] types.
+///
+/// ### Disadvantages:
+/// - Easier to introduce UB in unsafe code. In empty lists, the ghost node can
+///   point to itself. So mutating both `node` and `node.next` at the same time
+///   is tricky. They need to be ordered to respect the stacked borrows or tree
+///   borrows model of miri.
+///
+/// ## Cursor
+///
+/// A Cursor can be used to mutate the list at arbitrary positions.
+/// In fact, the [LinkedList::push_back] family or methods just uses [Cursor]
+/// under the hood.
+///
+/// Cursor is always _on_ a node.
+///
+/// So an `n` element linked list with the cursor on the ghost node looks like:
+///
+/// ```text
+/// +------------------------------+
+/// | 1st | 2nd | ... | n-th |ghost|
+/// +------------------------------+
+///   ^                   ^     ^
+///  head               tail   cur
+/// ```
+///
+/// where
+/// - [Cursor::insert_after]  => inserts at front of list
+/// - [Cursor::insert_before] => inserts at back of list
+///
+/// e.g.,
+/// [LinkedList::cursor_back()].[insert_after()](Cursor::insert_after()) has the same effect as
+/// [LinkedList::cursor_front()].move_to_prev_into_ghost().[insert_before()](Cursor::insert_before())
+/// (they insert a new tail).
+///
+/// e.g.,
+/// [LinkedList::cursor_front()].[insert_before()](Cursor::insert_before()) has the same effect as
+/// [LinkedList::cursor_back()].move_to_next_into_ghost().[insert_after()](Cursor::insert_after())
+/// (they insert a new head).
 pub struct LinkedList<T> {
-    head: NodePtr<T>,
-    tail: NodePtr<T>,
+    head: Link<T>,
+    tail: Link<T>,
     len: usize,
 }
 
 // SAFETY: NonNull<T> is usually !Send but in our case, override this.
 // It's okay because:
-// 1. there is no aliasing ... we never expose internal pointers; &mut are careful exposed from unsafe blocks
+// 1. there is no aliasing ... we never expose internal pointers; &mut are
+//   carefully managed in unsafe blocks
 // 2. LinkedList does haven't any funky stuff like Rc and/or interior mutability
 unsafe impl<T> Send for LinkedList<T> {}
 
 // SAFETY: NonNull<T> is usually !Sync but in our case, override this.
 // It's okay because:
-// 1. there is no aliasing ... we never expose internal pointers; &mut are careful exposed from unsafe blocks
+// 1. there is no aliasing ... we never expose internal pointers; &mut are
+//   carefully managed in unsafe blocks
 // 2. LinkedList does haven't any funky stuff like Rc and/or interior mutability
 unsafe impl<T> Sync for LinkedList<T> {}
 
+/// Like an iterator but supercharged to be able to change the list
 pub struct Cursor<'list, T> {
-    cur: NodePtr<T>,
+    cur: Link<T>,
+
+    /// Reference to list ensures:
+    /// - [Cursor] cannot outlive [LinkedList]
+    /// - prevent any other [Cursor] or [Iter] from existing
     list: &'list mut LinkedList<T>,
 }
 
 pub struct Iter<'list, T> {
-    cur: NodePtr<T>,
-    // prevent &mut ref on list while were are iterating
+    cur: Link<T>,
+
     #[expect(unused)]
+    /// Reference to list ensures:
+    /// - [Iter] cannot outlive [LinkedList]
+    /// - prevent any other [Cursor] from existing. Multiple [Iter] are ok.
     list: &'list LinkedList<T>,
 }
 
 impl<T> LinkedList<T> {
+    #[expect(
+        clippy::new_without_default,
+        reason = "Cannot implement Default for Node"
+    )]
     pub fn new() -> Self {
+        let ghost_link = Node::new_ghost_link();
         Self {
-            head: None,
-            tail: None,
+            head: ghost_link,
+            tail: ghost_link,
             len: 0,
         }
     }
@@ -109,14 +304,19 @@ impl<T> LinkedList<T> {
     // whereas is_empty() is almost always cheap.
     // (Also ask yourself whether len() is expensive for LinkedList)
     pub fn is_empty(&self) -> bool {
-        self.head.is_none()
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        unsafe { self.head.as_ref().is_ghost }
     }
 
     pub fn len(&self) -> usize {
         self.len
     }
 
-    pub fn push_back(&mut self, data: T) {
+    pub fn push_back(&mut self, data: T)
+    // where
+    //     T: Debug,
+    {
         self.cursor_back().insert_after(data);
     }
 
@@ -124,7 +324,10 @@ impl<T> LinkedList<T> {
         self.cursor_back().take()
     }
 
-    pub fn push_front(&mut self, data: T) {
+    pub fn push_front(&mut self, data: T)
+    // where
+    //     T: Debug,
+    {
         self.cursor_front().insert_before(data);
     }
 
@@ -132,7 +335,8 @@ impl<T> LinkedList<T> {
         self.cursor_front().take()
     }
 
-    /// Return a cursor positioned on the front element
+    /// Return a cursor positioned on the front element.
+    /// Empty lists will have cursor pointing to ghost node.
     pub fn cursor_front(&mut self) -> Cursor<'_, T> {
         Cursor {
             cur: self.head,
@@ -141,6 +345,7 @@ impl<T> LinkedList<T> {
     }
 
     /// Return a cursor positioned on the back element
+    /// Empty lists will have cursor pointing to ghost node.
     pub fn cursor_back(&mut self) -> Cursor<'_, T> {
         Cursor {
             cur: self.tail,
@@ -159,11 +364,28 @@ impl<T> LinkedList<T> {
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        while self.pop_front().is_some() {}
+        // Drop all data nodes
+        let mut cursor = self.cursor_front();
+        while cursor.take().is_some() {}
+
+        // Drop the ghost node (which cursor never releases)
+
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        assert!(unsafe { self.head.as_ref().is_ghost });
+
+        // SAFETY: We never expose the ghost node and current method has &mut to
+        // the list => no &mut or & to node exists.
+        // The original link came from Node::new_ghost_link().
+        let data = unsafe { self.head.into_boxed_node() }.into_data();
+        assert!(data.is_none());
     }
 }
 
-impl<T> FromIterator<T> for LinkedList<T> {
+impl<T> FromIterator<T> for LinkedList<T>
+// where
+//     T: Debug,
+{
     fn from_iter<S: IntoIterator<Item = T>>(iter: S) -> Self {
         let mut list = LinkedList::new();
         for item in iter {
@@ -178,200 +400,213 @@ impl<T> FromIterator<T> for LinkedList<T> {
 impl<T> Cursor<'_, T> {
     /// Take a mutable reference to the current element
     pub fn peek_mut(&mut self) -> Option<&mut T> {
-        let mut non_null_cur = self.cur?;
-        // SAFETY: No other &mut Node exists for current node, as to get one
-        // one needs &mut Cursor, which no-one else has since we current
-        // method has it. No other &Node exists because Iter + Cursor
-        // cannot both co-exist.
-        Some(&mut unsafe { non_null_cur.as_mut() }.data)
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        if unsafe { self.cur.as_ref() }.is_ghost {
+            None
+        } else {
+            // SAFETY: No other &mut Node exists for current node, as to get one
+            // one needs &mut Cursor, which no-one else has since current
+            // method has it. No other &Node exists because Iter + Cursor
+            // cannot both co-exist.
+            // Only ghost nodes are missing data.
+            Some(unsafe { self.cur.as_mut().data.assume_init_mut() })
+        }
     }
 
-    /// Move one position forward (towards the back) and
-    /// return a reference to the new position
+    /// Move one position forward (towards the front) and
+    /// return a reference to the new position.
+    ///
+    /// The cursor is not "fused" due to the fact the ghost node makes the
+    /// linked list a loop.  After returning None (i.e., you have moved into the
+    /// ghost node), the subsequent invocation will return the _head_ value [if
+    /// it exists].
     #[expect(
         clippy::should_implement_trait,
         reason = "suppress name of next() warning"
     )]
     pub fn next(&mut self) -> Option<&mut T> {
-        let non_null_cur = self.cur.take()?;
-
-        // Advance cursor
-        // SAFETY: Notes for peek_mut() also apply
-        self.cur = unsafe { non_null_cur.as_ref() }.next;
-
-        let mut non_null_cur = self.cur?;
-        // SAFETY: Notes for peek_mut() also apply
-        Some(unsafe { &mut non_null_cur.as_mut().data })
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        self.cur = unsafe { self.cur.as_ref().next };
+        self.peek_mut()
     }
 
     /// Move one position backward (towards the front) and
     /// return a reference to the new position
+    ///
+    /// The cursor is not "fused" due to the fact the ghost node makes the
+    /// linked list a loop.  After returning None (i.e., you have moved into the
+    /// ghost node), the subsequent invocation will return the _tail_ value [if
+    /// it exists].
     pub fn prev(&mut self) -> Option<&mut T> {
-        let non_null_cur = self.cur.take()?;
-
-        // Move back cursor
-        // SAFETY: Notes for peek_mut() also apply
-        self.cur = unsafe { non_null_cur.as_ref() }.prev;
-
-        let mut non_null_cur = self.cur?;
-        // SAFETY: Notes for peek_mut() also apply
-        Some(unsafe { &mut non_null_cur.as_mut().data })
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        self.cur = unsafe { self.cur.as_ref().prev };
+        self.peek_mut()
     }
 
     /// Remove and return the element at the current position and move the cursor
     /// to the neighboring element that's closest to the back. This can be
     /// either the next or previous position.
+    ///
+    /// If the removal results in an empty list, the cursor will be moved to the
+    /// ghost node.
     pub fn take(&mut self) -> Option<T> {
-        let non_null_cur = self.cur.take()?;
+        let cur = self.cur;
+        if unsafe { cur.as_ref().is_ghost } {
+            None
+        } else {
+            // SAFETY: We never release the link/pointer to the data node
+            // and current method has &mut to the list => no &mut or & to node
+            // exists.
+            // The original link came from Node::new_link.
+            let node = unsafe { cur.into_boxed_node() };
 
-        // SAFETY: There are no other [mut/immut] references to Node
-        // because there is no other concurrently running methods from Cursor/Iter/etc
-        // since we have &mut Cursor.
-        // All NodePtr were produce by Node::into_node_ptr().
-        let node = unsafe { non_null_cur.into_boxed_node() };
+            // We will drop the boxed node, so make sure everything that used to
+            // point it now point to something else
 
-        // We will drop the boxed node, so make sure everything that used to
-        // point it now point to something else
+            let mut prev = node.prev;
+            let mut next = node.next;
 
-        if let Some(mut prev) = node.prev {
+            if cur == self.list.head {
+                // head was pointing to boxed node => make it point to next node
+                self.list.head = next;
+            }
+            if cur == self.list.tail {
+                // tail was pointing to boxed node => make it point to previous node
+                self.list.tail = prev;
+            }
+
+            self.cur = if unsafe { next.as_ref().is_ghost } {
+                // avoid advancing off list; stay on new tail [unless list has
+                // become empty ... in which case either prev or next
+                // works as both point to ghost node]
+                prev
+            } else {
+                // advance forward [into non-ghost node]
+                next
+            };
+            self.list.len -= 1;
+
+            let val = Some(node.into_data().expect("node should not be ghost"));
+
+            // ATTN: Must change prev + next at end _after_ we are done accessing "node: Box".
+            // This is necessary to avoid UB flagged by miri.
+
             // SAFETY: There are no other [mut/immut] references to previous Node
             // because
             // * at start of this method take(), we start fresh so no such ref can exist
-            // * there are no cycles/loops in the linked list (including loopback pointers)
-            unsafe { prev.as_mut().next = node.next };
-        }
-        if let Some(mut next) = node.next {
-            // SAFETY: Notes from node.prev above apply
-            unsafe { next.as_mut().prev = node.prev };
-        }
+            unsafe {
+                prev.as_mut().next = next;
+                next.as_mut().prev = prev;
+            }
 
-        if Some(non_null_cur) == self.list.head {
-            // head was pointing to boxed node => make it point to next node
-            self.list.head = node.next;
+            val
+            // drop(boxed_node);
         }
-        if Some(non_null_cur) == self.list.tail {
-            // tail was pointing to boxed node => make it point to previous node
-            self.list.tail = node.prev;
-        }
-
-        self.cur = match node.next {
-            // Advance cursor forward
-            Some(next) => Some(next),
-            // Advance cursor backwards when we're at the end
-            None => node.prev,
-        };
-
-        self.list.len -= 1;
-
-        Some(node.data)
-        // drop(boxed_node);
     }
 
-    //
-    //
-    //   0   1   ....  (n-1)
-    // +-------------------------+
-    // |   |   |   |   |   |ghost|
-    // +-------------------------+
-    //                        ^
-    //                        cur
-    //
-    // Cursor is always _on_ an element, with the "ghost" element:
-    // - necessary for empty lists
-    // - insert_after while on ghost element => insert at front of list
-    // - insert_before while on ghost element => insert at back of list
+    /// Insert after current node. Cursor is not moved.
+    /// Calling this on the ghost node will insert a new head.
+    pub fn insert_after(&mut self, data: T)
+    // where
+    //     T: Debug,
+    {
+        // SAFETY: At the start of this method, there no references (&mut/&)
+        // to _any_ nodes because:
+        // - We have &mut Cursor => no other cursor methods are running
+        // - Cursor has &mut LinkedList => no other list methods are running
+        //
+        // Below, we only need to worry about circular pointers inside this
+        // method.  An even then it's only possible when inserting into empty
+        // list ... when current node is a self pointing ghost node.
 
-    pub fn insert_after(&mut self, data: T) {
-        let mut new_node = Node::new(data);
-        let node_ptr = {
-            if let Some(mut cur) = self.cur {
-                // SAFETY: We are only method that can have &mut Node because we occupy &mut Cursor.
-                // All NodePtr were produce by Node::into_node_ptr() so they are properly aligned/etc.
-                let cur_mut = unsafe { cur.as_mut() };
-                new_node.next = cur_mut.next;
-                new_node.prev = self.cur;
+        // SAFETY: Do the next/prev.as_mut() last to avoid overlapping &mut
+        // See Node.new_ghost_link() for more details
+        let cur_mut: &mut Node<T> = unsafe { self.cur.as_mut() };
 
-                let node_ptr = new_node.into_node_ptr();
-                if let Some(mut next) = cur_mut.next {
-                    // SAFETY: Above SAFETY notes apply.
-                    // Also there are no cycles in the linked list so &mut next-Node
-                    // does not overlap with &mut new_node
-                    unsafe { next.as_mut().prev = node_ptr };
-                }
-                cur_mut.next = node_ptr;
-                node_ptr
-            } else {
-                // At "ghost" entry => put new node before head
-                new_node.next = self.list.head;
-                let node_ptr = new_node.into_node_ptr();
-                if let Some(mut head) = self.list.head {
-                    // SAFETY: Above SAFETY notes apply.
-                    // Also, head is not same as new node so their &ref cannot overlap.
-                    unsafe { head.as_mut().prev = node_ptr };
-                } else {
-                    self.list.head = node_ptr;
-                }
-                node_ptr
-            }
-        };
-        if self.list.tail.is_none() || self.list.tail == self.cur {
-            // insert into empty list or after old tail always sets a new tail
-            self.list.tail = node_ptr;
+        // Point new node to what it is spliced between
+        let new_node_link = Node::new_link(data, self.cur, cur_mut.next);
+
+        if cur_mut.next == self.list.head {
+            self.list.head = new_node_link;
         }
+        if self.cur == self.list.tail {
+            self.list.tail = new_node_link;
+        }
+
+        // Point formerly adjacent nodes to new node
+
+        // Copy the raw pointer because we need to create &mut from it later
+        let mut old_next = cur_mut.next;
+
+        // This is the last access to cur_mut, ending its lifetime
+        cur_mut.next = new_node_link;
+
+        // SAFETY: cur_mut is on only other _possible_ &mut to the node, and its
+        // lifetime has ended.  We can get a new &mut
+        unsafe { old_next.as_mut().prev = new_node_link };
+
         self.list.len += 1;
     }
 
-    pub fn insert_before(&mut self, data: T) {
-        let mut new_node = Node::new(data);
-        let node_ptr = {
-            if let Some(mut cur) = self.cur {
-                // SAFETY: We are only method that can have &mut Node because we occupy &mut Cursor.
-                // All NodePtr were produce by Node::into_node_ptr() so they are properly aligned/etc.
-                let cur_mut = unsafe { cur.as_mut() };
-                new_node.prev = cur_mut.prev;
-                new_node.next = self.cur;
+    /// Insert before current node. Cursor is not moved.
+    /// Calling this on the ghost node will insert a new tail.
+    pub fn insert_before(&mut self, data: T)
+    // where
+    //     T: Debug,
+    {
+        // SAFETY: At the start of this method, there no references (&mut/&)
+        // to _any_ nodes because:
+        // - We have &mut Cursor => no other cursor methods are running
+        // - Cursor has &mut LinkedList => no other list methods are running
+        //
+        // Below, we only need to worry about circular pointers inside this
+        // method.  An even then it's only possible when inserting into empty
+        // list ... when current node is a self pointing ghost node.
 
-                let node_ptr = new_node.into_node_ptr();
-                if let Some(mut prev) = cur_mut.prev {
-                    // SAFETY: Above SAFETY notes apply.
-                    // Also there are no cycles in the linked list so &mut prev-Node
-                    // does not overlap with &mut new_node
-                    unsafe { prev.as_mut().next = node_ptr };
-                }
-                cur_mut.prev = node_ptr;
-                node_ptr
-            } else {
-                // At "ghost" entry => put new node after tail
-                new_node.prev = self.list.tail;
-                let node_ptr = new_node.into_node_ptr();
-                if let Some(mut tail) = self.list.tail {
-                    // SAFETY: Above SAFETY notes apply.
-                    // Also, tail is not same as new node so their &ref cannot overlap.
-                    unsafe { tail.as_mut().next = node_ptr };
-                } else {
-                    self.list.tail = node_ptr;
-                }
-                node_ptr
-            }
-        };
-        if self.list.head.is_none() || self.list.head == self.cur {
-            // insert into empty list or after old head always sets a new head
-            self.list.head = node_ptr;
+        // SAFETY: Do the prev/next.as_mut() last to avoid overlapping &mut
+        // See Node.new_ghost_link() for more details
+        let cur_mut: &mut Node<T> = unsafe { self.cur.as_mut() };
+
+        // Point new node to what it is spliced between
+        let new_node_link = Node::new_link(data, cur_mut.prev, self.cur);
+
+        if cur_mut.prev == self.list.tail {
+            self.list.tail = new_node_link;
         }
+        if self.cur == self.list.head {
+            self.list.head = new_node_link;
+        }
+
+        // Point formerly adjacent nodes to new node
+
+        // Copy the raw pointer because we need to create &mut from it later
+        let mut old_prev = cur_mut.prev;
+
+        // This is the last access to cur_mut, ending its lifetime
+        cur_mut.prev = new_node_link;
+
+        // SAFETY: cur_mut is on only other _possible_ &mut to the node, and its
+        // lifetime has ended.  We can get a new &mut
+        unsafe { old_prev.as_mut().next = new_node_link };
+
         self.list.len += 1;
     }
 
     pub fn seek_forward(&mut self, skip: usize) -> bool {
         let mut cur = self.cur;
         for _ in 0..skip {
-            match cur {
-                Some(non_null_cur) => {
-                    // SAFETY: No other [mut/immut] references to Node exist
-                    // because we have &mut Cursor
-                    cur = unsafe { non_null_cur.as_ref() }.next;
-                }
-                None => return false,
+            // SAFETY: All links are properly aligned because they come from
+            // Node::into_link()
+            // Also no other reference exist because we have &mut Cursor and
+            // &mut LinkedList
+            let cur_ref = unsafe { cur.as_ref() };
+            if cur_ref.is_ghost {
+                return false;
             }
+            cur = cur_ref.next;
         }
         self.cur = cur;
         true
@@ -380,14 +615,15 @@ impl<T> Cursor<'_, T> {
     pub fn seek_backward(&mut self, skip: usize) -> bool {
         let mut cur = self.cur;
         for _ in 0..skip {
-            match cur {
-                Some(non_null_cur) => {
-                    // SAFETY: No other [mut/immut] references to Node exist
-                    // because we have &mut Cursor
-                    cur = unsafe { non_null_cur.as_ref() }.prev
-                }
-                None => return false,
+            // SAFETY: All links are properly aligned because they come from
+            // Node::into_link()
+            // Also no other reference exist because we have &mut Cursor and
+            // &mut LinkedList
+            let cur_ref = unsafe { cur.as_ref() };
+            if cur_ref.is_ghost {
+                return false;
             }
+            cur = cur_ref.prev;
         }
         self.cur = cur;
         true
@@ -398,14 +634,26 @@ impl<'list, T> Iterator for Iter<'list, T> {
     type Item = &'list T;
 
     fn next(&mut self) -> Option<&'list T> {
-        let non_null_cur = self.cur.take()?;
-        // SAFETY: No mut references to Node exist because we have &mut Iter which
-        // occupies a &LinkedList via Iter.list, which prevents Cursor from existing
-        let node_ref = unsafe { non_null_cur.as_ref() };
-        self.cur = node_ref.next;
-        Some(&node_ref.data)
+        // SAFETY: All links are properly aligned because they come from
+        // Node::into_link()
+        // Also no other reference exist because we have &mut Iter and
+        // &LinkedList, which also prevents any existing &mut Cursor
+        let cur_ref = unsafe { self.cur.as_ref() };
+        if cur_ref.is_ghost {
+            // NB: Don't advance past ghost node so iterator is fused
+            None
+        } else {
+            // Only advance cursor if not on ghost node
+            self.cur = cur_ref.next;
+
+            // SAFETY: Only ghost nodes are missing values
+            Some(unsafe { cur_ref.data.assume_init_ref() })
+        }
     }
 }
+
+// None state is sticky
+impl<'list, T> FusedIterator for Iter<'list, T> {}
 
 #[cfg(test)]
 mod tests {
@@ -619,6 +867,7 @@ mod tests {
     #[test]
     fn drop_no_double_frees() {
         use std::cell::Cell;
+        // #[derive(Debug)]
         struct DropCounter<'a>(&'a Cell<usize>);
         impl Drop for DropCounter<'_> {
             fn drop(&mut self) {
@@ -636,6 +885,7 @@ mod tests {
         assert_eq!(counter.get(), N);
     }
     #[test]
+    #[cfg(feature = "slow_tests")]
     fn drop_large_list() {
         drop((0..2_000_000).collect::<LinkedList<i32>>());
     }

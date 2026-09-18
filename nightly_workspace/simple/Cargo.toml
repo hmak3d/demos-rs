@@ -5,3 +5,11 @@ edition = { workspace = true }
 
 [dependencies]
 rand = { workspace = true }
+
+[features]
+default = [ "slow_tests" ]
+# Also run slow tests?
+# Disable this feature when running with miri as its overhead
+# is too high for some tests (tests take forever)
+# i.e., cargo miri test doubly_linked_list --no-default-features
+slow_tests = []
