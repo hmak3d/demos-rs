@@ -3,17 +3,25 @@
 use rand::{Rng, RngExt};
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 /// A `RobotFactory` is responsible for ensuring that all robots produced by
 /// it have a unique name. Robots from different factories can have the same
 /// name.
+///
+/// ```compile_fail
+/// use crate::simple::exercism::robot_name::*;
+/// let mut rng = rand::rng();
+/// let mut robot = factory.new_robot(&mut rng);
+/// drop(factory);
+/// // Next line will not compiile because "robot" cannot outlive "factory"
+/// std::hint::black_box(robot);
+/// ```
 pub struct RobotFactory {
-    assigned_names: Rc<RefCell<AssignedNames>>,
+    assigned_names: RefCell<AssignedNames>,
 }
 
-pub struct Robot {
-    assigned_names: Rc<RefCell<AssignedNames>>,
+pub struct Robot<'factory> {
+    assigned_names: &'factory RefCell<AssignedNames>,
     name: String,
 }
 
@@ -55,20 +63,20 @@ impl RobotFactory {
     #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
-            assigned_names: Rc::new(RefCell::new(AssignedNames::new())),
+            assigned_names: RefCell::new(AssignedNames::new()),
         }
     }
 
     /// NB: &self not (&mut self) so that created [Robot] can call share references to same [RobotFactory]
     pub fn new_robot<R: Rng>(&self, rng: &mut R) -> Robot<'_> {
         Robot {
-            assigned_names: Rc::clone(&self.assigned_names),
+            assigned_names: &self.assigned_names,
             name: self.assigned_names.borrow_mut().generate_name(rng),
         }
     }
 }
 
-impl Robot {
+impl<'factory> Robot<'factory> {
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
