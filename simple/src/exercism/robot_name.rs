@@ -59,7 +59,8 @@ impl RobotFactory {
         }
     }
 
-    pub fn new_robot<R: Rng>(&mut self, rng: &mut R) -> Robot {
+    /// NB: &self not (&mut self) so that created [Robot] can call share references to same [RobotFactory]
+    pub fn new_robot<R: Rng>(&self, rng: &mut R) -> Robot<'_> {
         Robot {
             assigned_names: Rc::clone(&self.assigned_names),
             name: self.assigned_names.borrow_mut().generate_name(rng),
@@ -109,19 +110,23 @@ mod tests {
     #[test]
     fn robot_name_depends_on_rng() {
         let mut rng = deterministic_rng();
-        let robot_1 = RobotFactory::new().new_robot(&mut rng);
-        let robot_2 = RobotFactory::new().new_robot(&mut rng);
+        let factory_1 = RobotFactory::new();
+        let factory_2 = RobotFactory::new();
+        let robot_1 = factory_1.new_robot(&mut rng);
+        let robot_2 = factory_2.new_robot(&mut rng);
         assert_ne!(robot_1.name(), robot_2.name());
     }
     #[test]
     fn robot_name_only_depends_on_rng() {
-        let robot_1 = RobotFactory::new().new_robot(&mut deterministic_rng());
-        let robot_2 = RobotFactory::new().new_robot(&mut deterministic_rng());
+        let factory_1 = RobotFactory::new();
+        let factory_2 = RobotFactory::new();
+        let robot_1 = factory_1.new_robot(&mut deterministic_rng());
+        let robot_2 = factory_2.new_robot(&mut deterministic_rng());
         assert_eq!(robot_1.name(), robot_2.name());
     }
     #[test]
     fn factory_prevents_name_collisions() {
-        let mut factory = RobotFactory::new();
+        let factory = RobotFactory::new();
         let robot_1 = factory.new_robot(&mut deterministic_rng());
         let robot_2 = factory.new_robot(&mut deterministic_rng());
         assert_ne!(robot_1.name(), robot_2.name());
@@ -129,7 +134,7 @@ mod tests {
     #[test]
     fn new_name_should_match_expected_pattern() {
         let mut rng = deterministic_rng();
-        let mut factory = RobotFactory::new();
+        let factory = RobotFactory::new();
         let mut robot = factory.new_robot(&mut rng);
         assert_name_matches_pattern(robot.name());
         robot.reset(&mut rng);
@@ -138,7 +143,7 @@ mod tests {
     #[test]
     fn new_name_is_different_from_old_name() {
         let mut rng = deterministic_rng();
-        let mut factory = RobotFactory::new();
+        let factory = RobotFactory::new();
         let mut robot = factory.new_robot(&mut rng);
         let name_1 = robot.name().to_string();
         robot.reset(&mut rng);
@@ -147,7 +152,7 @@ mod tests {
     }
     #[test]
     fn factory_prevents_name_collision_despite_reset() {
-        let mut factory = RobotFactory::new();
+        let factory = RobotFactory::new();
         let mut rng = deterministic_rng();
         let mut robot_1 = factory.new_robot(&mut rng);
         robot_1.reset(&mut rng);
@@ -159,7 +164,7 @@ mod tests {
     #[test]
     fn old_name_becomes_available_after_reset() {
         let mut rng = deterministic_rng();
-        let mut factory = RobotFactory::new();
+        let factory = RobotFactory::new();
         let mut robot = factory.new_robot(&mut rng);
         let first_name = robot.name().to_string();
         robot.reset(&mut rng); // cause first name to become available again
