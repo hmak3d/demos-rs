@@ -327,7 +327,9 @@ mod tests {
     // pre_implemented.rs for technical reasons.
     #[test]
     fn advanced_linked_list_is_send_sync() {
+        #[allow(unused)]
         trait AssertSend: Send {}
+        #[allow(unused)]
         trait AssertSync: Sync {}
         impl<T: Send> AssertSend for LinkedList<T> {}
         impl<T: Sync> AssertSync for LinkedList<T> {}
