@@ -122,8 +122,15 @@ impl<T> Node<T> {
             is_ghost: true,
         });
 
-        let mut link = node.into_link();
+        let link = node.into_link();
 
+        Node::make_self_pointing(link)
+    }
+
+    #[cfg(not(feature = "doubly_linked_list_ub"))]
+    /// Patch the prev/next pointers (e.g., to make ghost node self pointing).
+    /// Return link/pointer that should be used for ghost node going forward.
+    fn make_self_pointing(mut link: Link<T>) -> Link<T> {
         // Make node point to itself
         // SAFETY: link is aligned because it came from Node::into_link().
         // No other &mut exists in this method.
@@ -146,6 +153,27 @@ impl<T> Node<T> {
         // it points to same address as link.
 
         link
+    }
+
+    #[cfg(feature = "doubly_linked_list_ub")]
+    /// *INCORRECTLY* patch the prev/next pointers (e.g., to make ghost node self pointing).
+    /// Return link/pointer that should be used for ghost node going forward.
+    fn make_self_pointing(link: Link<T>) -> Link<T> {
+        let mut node = unsafe { link.into_boxed_node() };
+        node.prev = link;
+        node.next = link;
+
+        let new_node_link = node.into_link();
+
+        // both link +
+        eprintln!(
+            "prev/next={:#018p} node={:#018p}",
+            link.as_ptr(),
+            new_node_link.as_ptr()
+        );
+        assert_eq!(link.as_ptr(), new_node_link.as_ptr());
+
+        new_node_link
     }
 
     /// Convert [`Box<Node<T>>`] -> [Link]
