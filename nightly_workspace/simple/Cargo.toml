@@ -13,3 +13,5 @@ default = [ "slow_tests" ]
 # is too high for some tests (tests take forever)
 # i.e., cargo miri test doubly_linked_list --no-default-features
 slow_tests = []
+# Introduce UB so miri can find it
+doubly_linked_list_ub = []

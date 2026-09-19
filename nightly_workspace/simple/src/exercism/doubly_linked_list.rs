@@ -122,30 +122,49 @@ impl<T> Node<T> {
             is_ghost: true,
         });
 
+        Node::make_self_pointing(node)
+    }
+
+    #[cfg(not(feature = "doubly_linked_list_ub"))]
+    /// Make the node behind a link point to itself (e.g., for ghost nodes).
+    /// Return link/pointer that should be used for node going forward.
+    fn make_self_pointing(node: Box<Node<T>>) -> Link<T> {
         let mut link = node.into_link();
 
-        // Make node point to itself
         // SAFETY: link is aligned because it came from Node::into_link().
         // No other &mut exists in this method.
         let node_mut = unsafe { link.as_mut() };
         node_mut.prev = link;
         node_mut.next = link;
 
-        // ATTN: *Must* return the same "link" used to patch the
-        // NonNull::dangling().
-        //
-        // It is important that _both_ the return value + prev/next pointers
-        // have same pointer provenance.
-        // - For stacked borrows, they should be at the same level in the borrow stack
-        // - For tree borrows, references derived from them must not have overlapping
-        //   lifetimes. insert_*() and take() methods must guarantee this.
-        // Otherwise, UB will result if you are not careful modifying the ghost node
-        // [which starts off as a self pointing struct].
-        //
-        // For example, do *not* return link.into_boxed_node().into_link() even though
-        // it points to same address as link.
-
+        // ATTN: All modifications (whether through Node.prev/prev of LinkedList.head/tial
+        // must use the _same_ pointer (with same provenance). This will help us avoid UB.
+        // For an example of what problems can occurs if we don't do this, see the
+        // "doubly_linked_list_ub" INCORRECT alternative method below.
         link
+    }
+
+    #[cfg(feature = "doubly_linked_list_ub")]
+    /// *INCORRECTLY* make the node behind a link point to itself (e.g., for ghost nodes).
+    /// Return link/pointer that should be used for node going forward.
+    fn make_self_pointing(node: Box<Node<T>>) -> Link<T> {
+        let link = node.into_link();
+
+        // SAFETY: link is aligned because it came from Node::into_link().
+        // No other &mut exists in this method.
+        let mut node = unsafe { link.into_boxed_node() };
+        node.prev = link;
+        node.next = link;
+
+        // Returning "new_node_link" here instead of "link" will cause UB to
+        // occur if both are modified. This is not allowed because:
+        // - For stacked borrows, they are not at the same level in the borrow stack
+        // - For tree borrows, they have different provenance (aka in diff parts of the
+        //   provenance tree), an so mods on one will counts as foreign access and invalidate
+        //   the other
+        let new_node_link = node.into_link();
+        assert_eq!(link.as_ptr(), new_node_link.as_ptr());
+        new_node_link
     }
 
     /// Convert [`Box<Node<T>>`] -> [Link]
