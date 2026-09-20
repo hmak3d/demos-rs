@@ -8,10 +8,16 @@ rand = { workspace = true }
 
 [features]
 default = [ "slow_tests" ]
+
 # Also run slow tests?
 # Disable this feature when running with miri as its overhead
 # is too high for some tests (tests take forever)
 # i.e., cargo miri test doubly_linked_list --no-default-features
 slow_tests = []
-# Introduce UB so miri can find it
-doubly_linked_list_ub = []
+
+[lints.rust]
+# Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
+# Pass `--check-cfg cfg(...)` args to rustc.
+unexpected_cfgs = { level = "forbid", check-cfg = [
+    'cfg(doubly_linked_list_impl, values("alt", "ub", "ub_alt"))',
+    ] }

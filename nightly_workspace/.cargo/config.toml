@@ -1,0 +1,13 @@
+[build]
+
+# Run: RUSTFLAGS='--cfg doubly_linked_list_impl="ub"' cargo ...
+# to introduce rustc args like below.
+# NB: If we had defined `rustflags =` here, RUSTFLAGS will completely replace it.
+# rustflags = [ "--cfg", 'doubly_linked_list_impl="alt"' ]
+# rustflags = [ "--cfg", 'doubly_linked_list_impl="ub"' ]
+# rustflags = [ "--cfg", 'doubly_linked_list_impl="ub_alt"' ]
+
+# NB: Cargo.toml lints.rust.unexpected_cfgs.check-cfg will introduce add't rustc args like
+# rustflags = [
+#     '--check-cfg', 'cfg(doubly_linked_list_impl, values("alt", "ub", "ub_alt"))'
+# ]

@@ -1,4 +1,26 @@
 //! re: <https://exercism.org/tracks/rust/exercises/doubly-linked-list/edit>
+//!
+//! To run tests:
+//! ```sh
+//! # Have miri verify there is no UB
+//! $ MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
+//!
+//! # Have miri verify there is no UB (alternative version)
+//! $ RUSTFLAGS='--cfg doubly_linked_list_impl="alt"' MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
+//!
+//! # Have miri find intentional UB
+//! $ RUSTFLAGS='--cfg doubly_linked_list_impl="ub"' MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
+//!
+//! # Have miri find intentional UB (alternative version)
+//! $ RUSTFLAGS='--cfg doubly_linked_list_impl="ub_alt"' MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
+//!
+//! # Generate documentation for various implementations
+//! # re: file://.../nightly_workspace/target/doc/simple/exercism/doubly_linked_list/struct.Node.html#method.make_self_pointing
+//! $ cargo doc --document-hidden-items --no-deps
+//! $ RUSTDOCFLAGS='--cfg doubly_linked_list_impl="alt"' cargo doc --document-private-items --no-deps
+//! $ RUSTDOCFLAGS='--cfg doubly_linked_list_impl="ub"' cargo doc --document-private-items --no-deps
+//! $ RUSTDOCFLAGS='--cfg doubly_linked_list_impl="ub_alt"' cargo doc --document-private-items --no-deps
+//! ```
 // this module adds some functionality based on the required implementations
 // here like: `LinkedList::pop_back` or `Clone for LinkedList<T>`
 // You are free to use anything in it, but it's mainly for the test framework.
@@ -125,7 +147,11 @@ impl<T> Node<T> {
         Node::make_self_pointing(node)
     }
 
-    #[cfg(not(feature = "doubly_linked_list_ub"))]
+    #[cfg(not(any(
+        doubly_linked_list_impl = "alt",
+        doubly_linked_list_impl = "ub",
+        doubly_linked_list_impl = "ub_alt"
+    )))]
     /// Make the node behind a link point to itself (e.g., for ghost nodes).
     /// Return link/pointer that should be used for node going forward.
     fn make_self_pointing(node: Box<Node<T>>) -> Link<T> {
@@ -144,15 +170,58 @@ impl<T> Node<T> {
         link
     }
 
-    #[cfg(feature = "doubly_linked_list_ub")]
-    /// *INCORRECTLY* make the node behind a link point to itself (e.g., for ghost nodes).
-    /// Return link/pointer that should be used for node going forward.
+    #[cfg(doubly_linked_list_impl = "alt")]
+    /// Like default impl variant above except set prev/next _to_ NonNull from
+    /// [Box::as_mut_ptr] instead of from [Box::into_raw]. This makes the borrow
+    /// tree more shallow.
+    fn make_self_pointing(mut node: Box<Node<T>>) -> Link<T> {
+        let link = unsafe { NonNull::new_unchecked(Box::as_mut_ptr(&mut node)) };
+        node.prev = link;
+        node.next = link;
+
+        // Suppress auto-drop of Box. We will do it manually.
+        let dangle_ptr: *mut Node<T> = Box::into_raw(node);
+        assert_eq!(dangle_ptr, link.as_ptr());
+
+        // Do _not_ return NonNull::new_unchecked(dangle_ptr).
+        // This will result in UB.
+        // See #[cfg(doubly_linked_list_impl = "ub_alt")] which does demos this.
+        link
+
+        // NB: It is OK to do Box::from_raw(link.as_ptr()) even though
+        // Box::from_raw(Box::into_raw(node)) is what is normally done.
+        // The arguments [to from_raw] may be in diff parts of the borrow tree,
+        // but apparently can be pass to from_raw() according to miri.
+    }
+
+    #[cfg(doubly_linked_list_impl = "ub")]
+    /// Introduce UB by make prev/next vs LinkedList::head/tail
+    /// for the same Node point to different parts of the borrow tree.
+    /// prev/next will point to stuff that is "higher" up, so their
+    /// modification will invalidate LinkedList::head/tail.
     fn make_self_pointing(node: Box<Node<T>>) -> Link<T> {
         let link = node.into_link();
-
-        // SAFETY: link is aligned because it came from Node::into_link().
-        // No other &mut exists in this method.
         let mut node = unsafe { link.into_boxed_node() };
+        node.prev = link;
+        node.next = link;
+
+        // Returning "new_node_link" here instead of "link" will cause UB to
+        // occur if both are modified. This is not allowed because:
+        // - For stacked borrows, they are not at the same level in the borrow stack
+        // - For tree borrows, they have different alias (aka in diff parts of the
+        //   borrow tree), and so mods on one will count as foreign access and invalidate
+        //   the other
+        let new_node_link = node.into_link();
+        assert_eq!(link.as_ptr(), new_node_link.as_ptr());
+        new_node_link
+    }
+
+    #[cfg(doubly_linked_list_impl = "ub_alt")]
+    /// Like `cfg(doubly_linked_list_impl = "ub")` except
+    /// set prev/next _to_ NonNull from [Box::as_mut_ptr] instead of
+    /// from [Box::into_raw]. This makes for a more shallow borrow tree.
+    fn make_self_pointing(mut node: Box<Node<T>>) -> Link<T> {
+        let link = unsafe { NonNull::new_unchecked(Box::as_mut_ptr(&mut node)) };
         node.prev = link;
         node.next = link;
 

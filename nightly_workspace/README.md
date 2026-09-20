@@ -10,5 +10,9 @@ Unfortunately, projects/code that use different toolchains cannot be mixed in th
 MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
 
 # Have miri find intentional UB
-MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -F doubly_linked_list_ub -- --no-capture
+RUSTFLAGS='--cfg doubly_linked_list_impl="ub"' MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test doubly_linked_list --no-default-features -- --no-capture
+
+# To generate docs for specific config
+# Omit the --cfg if you want docs for default impl
+RUSTDOCFLAGS='--cfg doubly_linked_list_impl="ub"' cargo doc --no-deps --document-private-items
 ```
