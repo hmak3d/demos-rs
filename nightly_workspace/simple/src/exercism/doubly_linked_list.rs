@@ -85,7 +85,7 @@ impl<T> Node<T> {
     /// [ToNodeExt::into_boxed_node].
     ///
     /// ATTN: Callers must eventually call [ToNodeExt::into_boxed_node]
-    /// and then [Node::into_data] to avoid release leaks. Simply dropping
+    /// and then [Node::into_data] to avoid resource leaks. Simply dropping
     /// [Link] is insufficient.
     fn new_link(data: T, prev: Link<T>, next: Link<T>) -> Link<T> {
         Box::new(Self {
@@ -97,14 +97,14 @@ impl<T> Node<T> {
         .into_link()
     }
 
-    /// Create ghost [Node] holding, then return new [Link] pointing to it.
+    /// Create ghost [Node], then return new [Link] pointing to it.
     ///
     /// This calls [Node::into_link] internally so the return value
     /// satisfies some of the safety requirements of the argument passed to
     /// [ToNodeExt::into_boxed_node].
     ///
     /// ATTN: Callers must eventually call [ToNodeExt::into_boxed_node]
-    /// and then [Node::into_data] to avoid release leaks. Simply dropping
+    /// and then [Node::into_data] to avoid resource leaks. Simply dropping
     /// [Link] is insufficient.
     ///
     /// # Safety
@@ -137,10 +137,10 @@ impl<T> Node<T> {
         node_mut.prev = link;
         node_mut.next = link;
 
-        // ATTN: All modifications (whether through Node.prev/prev of LinkedList.head/tial
-        // must use the _same_ pointer (with same provenance). This will help us avoid UB.
+        // ATTN: All modifications [whether through Node.prev/prev or LinkedList.head/tail]
+        // must use the _same_ pointer [which means same alias]. This will help us avoid UB.
         // For an example of what problems can occurs if we don't do this, see the
-        // "doubly_linked_list_ub" INCORRECT alternative method below.
+        // "doubly_linked_list_ub" intentional INCORRECT alternative method below.
         link
     }
 
@@ -159,8 +159,8 @@ impl<T> Node<T> {
         // Returning "new_node_link" here instead of "link" will cause UB to
         // occur if both are modified. This is not allowed because:
         // - For stacked borrows, they are not at the same level in the borrow stack
-        // - For tree borrows, they have different provenance (aka in diff parts of the
-        //   provenance tree), an so mods on one will counts as foreign access and invalidate
+        // - For tree borrows, they have different alias (aka in diff parts of the
+        //   borrow tree), and so mods on one will count as foreign access and invalidate
         //   the other
         let new_node_link = node.into_link();
         assert_eq!(link.as_ptr(), new_node_link.as_ptr());
