@@ -1,3 +1,5 @@
+// Use std::sync::mpmc
+#![feature(mpmc_channel)]
 // For Bencher
 #![feature(test)]
 // Use nightly-only feature to silence error in memoize_fn.rs:
@@ -9,7 +11,6 @@
 //         |
 //         = help: add `#![feature(unboxed_closures)]` to the crate attributes to enable
 #![feature(unboxed_closures)]
-
 // Use nightly-only feature to silence error in memoize_fn.rs:
 //      error[E0658]: use of unstable library feature `fn_traits`
 //        --> simple/src/memoize_fn.rs:52:5

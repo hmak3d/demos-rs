@@ -1,15 +1,86 @@
 //! re: <https://exercism.org/tracks/rust/exercises/parallel-letter-frequency/edit>
 
 use std::collections::HashMap;
+use std::sync::{mpmc, mpsc}; // mpmc requires nightly #![feature(mpmc_channel)]
+use std::thread;
 
 pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
-    todo!(
-        "Count the frequency of letters in the given input '{input:?}'. Ensure that you are using {} to process the input.",
-        match worker_count {
-            1 => "1 worker".to_string(),
-            _ => format!("{worker_count} workers"),
+    // 1. Create input channel (mpmc) multi-producer to multi-consumer
+    // 2. Create output channel (mpsc) multi-producer to single-consumer
+    // 3. Create worker_count threads, where each thread will
+    //      in loop
+    //      - Consume 1 chunk from input channels (1's rx)
+    //      - Create HashMap over chunk
+    //          - Iterator over chunk's chars
+    //              - Ignoring digits + punctuation marks
+    //              - Normalizing chars to lowercase
+    //              - Bump up HashMap count for the current char
+    //      - Produce HashMap into output channel (2's tx)
+    //      - Stop if feeder threads is done
+    // 4. Create feeder thread, it will
+    //      - Chunk up inputs
+    //      - Feed chunks input channels (1's tx)
+    //      - Close input channel (1's tx)
+    // 5. Aggregate thread results
+    //      Iterate over worker outputs [until worker threads are done]
+    //          Fold worker output into accumulated counts
+
+    let (input_tx, input_rx) = mpmc::channel::<&str>();
+    let (output_tx, output_rx) = mpsc::channel::<HashMap<char, usize>>();
+
+    thread::scope(|s| {
+        // Create worker threads (to process chunks)
+        for _ in 0..worker_count {
+            let worker_input_rx = input_rx.clone();
+            let worker_output_tx = output_tx.clone();
+            s.spawn(move || {
+                // Collectively consume from input_rx [until feeder thread closes/drops its input_tx]
+                while let Ok(chunk) = worker_input_rx.recv() {
+                    let counts = chunk
+                        .chars()
+                        // .filter_map(|ch| ch.is_alphabetic().then(|| ch.to_ascii_lowercase()))
+                        .filter(|ch| ch.is_alphabetic()) // ignore digits + punctuation marks
+                        .map(|ch| ch.to_ascii_lowercase()) // normalize to lowercase
+                        .fold(HashMap::<char, usize>::new(), |mut counts, ch| {
+                            counts.entry(ch).and_modify(|val| *val += 1).or_insert(1);
+                            counts
+                        });
+                    worker_output_tx.send(counts).unwrap();
+                }
+
+                // Signal to thread aggregator all workers are done
+                drop(worker_output_tx);
+            });
         }
-    );
+
+        // Drop original input channel sink so that if workers terminate prematurely, feeder thread will get error
+        drop(input_rx);
+
+        // Drop original output channel source so that when workers close their clones, thread aggregator stops
+        drop(output_tx);
+
+        // Feeder threader (produce work for workers)
+        s.spawn(move || {
+            for chunk in input {
+                input_tx.send(chunk).unwrap();
+            }
+            // Signal to workers no more work => so they shut down
+            drop(input_tx);
+        });
+    });
+
+    // Aggregate thread results
+    let mut agg_counts = HashMap::<char, usize>::new();
+    for chunk_counts in output_rx {
+        // Merge counts. i.e., agg_counts[ch] += chunk_counts[ch] for every ch in chunk_counts
+        for (ch, count) in chunk_counts {
+            agg_counts
+                .entry(ch)
+                .and_modify(|val| *val += count)
+                .or_insert(count);
+        }
+    }
+    agg_counts
 }
 
 #[cfg(test)]
