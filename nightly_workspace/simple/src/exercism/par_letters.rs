@@ -14,8 +14,11 @@ pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
     use super as frequency;
     use std::collections::HashMap;
+    use test::Bencher;
+
     #[test]
     fn no_texts() {
         assert_eq!(frequency::frequency(&[], 4), HashMap::new());
@@ -161,6 +164,12 @@ mod tests {
         .collect();
         assert_eq!(frequency::frequency(&DOSTOEVSKY, 4), expected);
     }
+
+    #[bench]
+    fn bench_large_tests(bencher: &mut Bencher) {
+        bencher.iter(large_texts);
+    }
+
     // Poem by Friedrich Schiller. The corresponding music is the European Anthem.
     const ODE_AN_DIE_FREUDE: [&str; 8] = [
         "Freude schöner Götterfunken",

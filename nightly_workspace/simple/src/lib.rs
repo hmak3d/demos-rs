@@ -1,3 +1,5 @@
+// For Bencher
+#![feature(test)]
 // Use nightly-only feature to silence error in memoize_fn.rs:
 //      error[E0183]: manual implementations of `std::ops::FnOnce` are experimental
 //        --> simple/src/memoize_fn.rs:21:15
