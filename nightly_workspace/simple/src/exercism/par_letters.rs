@@ -1,6 +1,30 @@
 //! re: <https://exercism.org/tracks/rust/exercises/parallel-letter-frequency/edit>
+//!
+//! To run benchmark
+//! ```sh
+//! $ cargo bench exercism::par_letters::tests::bench_large_tests
+//! # =>
+//! running 1 test
+//! test exercism::par_letters::tests::bench_large_tests ... bench:     194,288.80 ns/iter (+/- 8,570.62)
+//!
+//! test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 35 filtered out; finished in 3.66s
+//!
+//! $ cargo bench exercism::par_letters::tests::bench_large_tests -F par_letters_raw_chunks
+//! # =>
+//! running 1 test
+//! test exercism::par_letters::tests::bench_large_tests ... bench:      88,184.72 ns/iter (+/- 6,813.33)
+//!
+//! test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 35 filtered out; finished in 5.06s
+
+//! ```
+
+// For Iterator::array_chunks()
+// #![feature(iter_array_chunks)]
+// Use std::sync::mpmc
+// #![feature(mpmc_channel)]
 
 use std::collections::HashMap;
+use std::sync::mpmc::Sender;
 use std::sync::{mpmc, mpsc}; // mpmc requires nightly #![feature(mpmc_channel)]
 use std::thread;
 
@@ -25,7 +49,7 @@ pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
     //      Iterate over worker outputs [until worker threads are done]
     //          Fold worker output into accumulated counts
 
-    let (input_tx, input_rx) = mpmc::channel::<&str>();
+    let (input_tx, input_rx) = mpmc::channel::<String>();
     let (output_tx, output_rx) = mpsc::channel::<HashMap<char, usize>>();
 
     thread::scope(|s| {
@@ -60,13 +84,7 @@ pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
         drop(output_tx);
 
         // Feeder threader (produce work for workers)
-        s.spawn(move || {
-            for chunk in input {
-                input_tx.send(chunk).unwrap();
-            }
-            // Signal to workers no more work => so they shut down
-            drop(input_tx);
-        });
+        s.spawn(move || pipe_chunks(input, input_tx));
     });
 
     // Aggregate thread results
@@ -81,6 +99,41 @@ pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
         }
     }
     agg_counts
+}
+
+#[cfg(feature = "par_letters_raw_chunks")]
+fn pipe_chunks(input: &[&str], tx: Sender<String>) {
+    // Handle regular chunks (all size CHUNK_SIZE)
+    for &chunk in input {
+        tx.send(chunk.to_string()).unwrap();
+    }
+    // Signal to workers no more work => so they shut down.
+    // Although drop() not strictly necessary, make it expplicit since the
+    // signaling is important.
+    drop(tx);
+}
+
+#[cfg(not(feature = "par_letters_raw_chunks"))]
+fn pipe_chunks(input: &[&str], tx: Sender<String>) {
+    // Even out chunk sizes so that we don't overload a worker and starve others.
+    // This will slow down the small cases (e.g., bench_large_tests 90ms -> 200ms) but will speed up
+    // bigger cases.
+    const CHUNK_SIZE: usize = 64;
+    let mut chunks_iter = input
+        .iter()
+        .flat_map(|s| s.chars())
+        .array_chunks::<CHUNK_SIZE>();
+    // Handle regular chunks (all size CHUNK_SIZE)
+    for chunk in &mut chunks_iter {
+        tx.send(chunk.into_iter().collect::<String>()).unwrap();
+    }
+    // Handle remaining smallest chunk (len < CHUNK_SIZE)
+    tx.send(chunks_iter.into_remainder().collect::<String>())
+        .unwrap();
+    // Signal to workers no more work => so they shut down.
+    // Although drop() not strictly necessary, make it expplicit since the
+    // signaling is important.
+    drop(tx);
 }
 
 #[cfg(test)]

@@ -17,5 +17,5 @@ RUSTFLAGS='--cfg doubly_linked_list_impl="ub"' MIRIFLAGS="-Zmiri-tree-borrows" c
 RUSTDOCFLAGS='--cfg doubly_linked_list_impl="ub"' cargo doc --no-deps --document-private-items
 
 # Run #[bench] benchmarks
-cargo bench exercism::par_letters::tests::bench_large_tests --no-default-features
+cargo bench exercism::par_letters::tests::bench_large_tests -F par_letters_raw_chunks
 ```

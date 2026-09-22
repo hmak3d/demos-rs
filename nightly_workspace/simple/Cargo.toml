@@ -15,6 +15,10 @@ default = [ "slow_tests" ]
 # i.e., cargo miri test doubly_linked_list --no-default-features
 slow_tests = []
 
+# Do _not_ even out work/chunks assigned to workers. Just send them raw.
+# This imbalance can mean some workers can starve while others are overloaded.
+par_letters_raw_chunks = []
+
 [lints.rust]
 # Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
 # Pass `--check-cfg cfg(...)` args to rustc.
