@@ -19,6 +19,9 @@ slow_tests = []
 # This imbalance can mean some workers can starve while others are overloaded.
 par_letters_raw_chunks = []
 
+# Use custom impl of mpmc channel instead of nightly mpmc
+par_letters_my_mpmc = []
+
 [lints.rust]
 # Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
 # Pass `--check-cfg cfg(...)` args to rustc.

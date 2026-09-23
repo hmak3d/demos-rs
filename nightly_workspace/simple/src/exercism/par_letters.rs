@@ -15,7 +15,6 @@
 //! test exercism::par_letters::tests::bench_large_tests ... bench:      88,184.72 ns/iter (+/- 6,813.33)
 //!
 //! test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 35 filtered out; finished in 5.06s
-
 //! ```
 
 // For Iterator::array_chunks()
@@ -24,9 +23,15 @@
 // #![feature(mpmc_channel)]
 
 use std::collections::HashMap;
-use std::sync::mpmc::Sender;
-use std::sync::{mpmc, mpsc}; // mpmc requires nightly #![feature(mpmc_channel)]
+use std::sync::mpsc;
 use std::thread;
+
+#[cfg(not(feature = "par_letters_my_mpmc"))]
+// mpmc requires nightly #![feature(mpmc_channel)]
+use std::sync::mpmc::{self, Sender};
+
+#[cfg(feature = "par_letters_my_mpmc")]
+use my_channel::{self as mpmc, Sender};
 
 pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
     // 1. Create input channel (mpmc) multi-producer to multi-consumer
@@ -134,6 +139,128 @@ fn pipe_chunks(input: &[&str], tx: Sender<String>) {
     // Although drop() not strictly necessary, make it expplicit since the
     // signaling is important.
     drop(tx);
+}
+
+#[cfg(feature = "par_letters_my_mpmc")]
+/// Local impl of mpmc (multi-producer multi-consumer) channel.
+/// This is rougly 2x slower than the nightly version. 🤷
+mod my_channel {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Condvar, Mutex};
+
+    struct Channel<T> {
+        not_empty: Condvar,
+        state: Mutex<ChannelState<T>>,
+    }
+
+    struct ChannelState<T> {
+        queue: VecDeque<T>,
+        send_count: usize,
+        recv_count: usize,
+    }
+
+    impl<T> Channel<T> {
+        fn new() -> Self {
+            Self {
+                not_empty: Condvar::new(),
+                state: Mutex::new(ChannelState {
+                    queue: VecDeque::new(),
+                    send_count: 1,
+                    recv_count: 1,
+                }),
+            }
+        }
+    }
+
+    pub struct Sender<T>(Arc<Channel<T>>);
+
+    impl<T> Sender<T>
+    where
+        T: Send + Sync,
+    {
+        pub fn send(&self, item: T) -> Result<(), String> {
+            let mut chan_state = self
+                .0
+                .state
+                .lock()
+                .map_err(|err| format!("send lock failed {}", err))?;
+            if chan_state.recv_count == 0 {
+                // All receivers dropped => reject send
+                return Err("no active receivers".to_string());
+            }
+            chan_state.queue.push_back(item);
+            self.0.not_empty.notify_one();
+            Ok(())
+        }
+    }
+
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Self {
+            // clone increase send_count
+            let mut chan_state = self.0.state.lock().unwrap();
+            chan_state.send_count += 1;
+            Self(Arc::clone(&self.0))
+        }
+    }
+
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            // clone decrease send_count
+            let mut chan_state = self.0.state.lock().unwrap();
+            chan_state.send_count -= 1;
+            self.0.not_empty.notify_all();
+        }
+    }
+
+    pub struct Receiver<T>(Arc<Channel<T>>);
+
+    impl<T> Receiver<T>
+    where
+        T: Send + Sync,
+    {
+        pub fn recv(&self) -> Result<T, String> {
+            let mut chan_state = self
+                .0
+                .state
+                .lock()
+                .map_err(|err| format!("recv lock failed {}", err))?;
+            while chan_state.queue.is_empty() && chan_state.send_count > 0 {
+                chan_state = self.0.not_empty.wait(chan_state).unwrap();
+            }
+            if chan_state.queue.is_empty() && chan_state.send_count == 0 {
+                return Err("disconnected".to_string());
+            }
+            assert!(!chan_state.queue.is_empty());
+            chan_state
+                .queue
+                .pop_front()
+                .ok_or("unexpected empty pop".to_string())
+        }
+    }
+
+    impl<T> Clone for Receiver<T> {
+        fn clone(&self) -> Self {
+            // clone increase recv_count
+            let mut chan_state = self.0.state.lock().unwrap();
+            chan_state.recv_count += 1;
+            Self(Arc::clone(&self.0))
+        }
+    }
+
+    impl<T> Drop for Receiver<T> {
+        fn drop(&mut self) {
+            // clone decrease recv_count
+            let mut chan_state = self.0.state.lock().unwrap();
+            chan_state.recv_count -= 1;
+        }
+    }
+
+    pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
+        let chan = Arc::new(Channel::new());
+        let tx = Sender(Arc::clone(&chan));
+        let rx = Receiver(chan);
+        (tx, rx)
+    }
 }
 
 #[cfg(test)]

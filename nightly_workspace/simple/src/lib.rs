@@ -1,7 +1,7 @@
 // For Iterator::array_chunks()
 #![cfg_attr(not(feature = "par_letters_raw_chunks"), feature(iter_array_chunks))]
 // Use std::sync::mpmc
-#![feature(mpmc_channel)]
+#![cfg_attr(not(feature = "par_letters_my_mpmc"), feature(mpmc_channel))]
 // For Bencher
 #![feature(test)]
 // Use nightly-only feature to silence error in memoize_fn.rs:
