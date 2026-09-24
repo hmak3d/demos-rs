@@ -15,15 +15,21 @@
 //! $ cargo test xorcism
 //! $ cargo test xorcism -F xorcism_buffered_write
 //!
-//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io::bench_'
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_slow_writer_munges ... bench:   7,614,420.80 ns/iter (+/- 139,507.97)
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges      ... bench:          17.14 ns/iter (+/- 0.77)
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip   ... bench:          17.13 ns/iter (+/- 0.11)
+//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io'
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_reader_munges           ... bench:          28.68 ns/iter (+/- 1.54)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_reader_roundtrip        ... bench:          34.38 ns/iter (+/- 0.26)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges           ... bench:          17.90 ns/iter (+/- 2.47)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip        ... bench:          17.18 ns/iter (+/- 0.31)
+//! test exercism::xorcism::tests::key_shorter_than_data::io_slow::bench_slow_reader_munges ... bench:   7,592,045.90 ns/iter (+/- 185,168.69)
+//! test exercism::xorcism::tests::key_shorter_than_data::io_slow::bench_slow_writer_munges ... bench:   7,554,483.30 ns/iter (+/- 161,346.39)
 //!
-//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io::bench_' -F xorcism_buffered_write
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_slow_writer_munges ... bench:   1,271,620.80 ns/iter (+/- 102,329.10)
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges      ... bench:          47.42 ns/iter (+/- 1.70)
-//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip   ... bench:          75.94 ns/iter (+/- 1.76)
+//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io' -F xorcism_buffered_write
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_reader_munges           ... bench:          28.76 ns/iter (+/- 0.74)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_reader_roundtrip        ... bench:          34.09 ns/iter (+/- 1.34)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges           ... bench:          46.19 ns/iter (+/- 3.13)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip        ... bench:          74.46 ns/iter (+/- 5.26)
+//! test exercism::xorcism::tests::key_shorter_than_data::io_slow::bench_slow_reader_munges ... bench:   7,598,920.90 ns/iter (+/- 123,870.46)
+//! test exercism::xorcism::tests::key_shorter_than_data::io_slow::bench_slow_writer_munges ... bench:   1,267,758.30 ns/iter (+/- 53,539.91)
 //! ```
 
 use std::borrow::Borrow;
@@ -352,8 +358,6 @@ mod tests {
         // #[cfg(feature = "io")]
         mod io {
             use super::*;
-            use std::thread;
-            use std::time::Duration;
 
             #[test]
             fn reader_munges() {
@@ -362,6 +366,10 @@ mod tests {
                 let bytes_read = reader.read_to_end(&mut buf).unwrap();
                 assert_eq!(bytes_read, INPUT.len());
                 assert_eq!(buf, EXPECT);
+            }
+            #[bench]
+            fn bench_reader_munges(bench: &mut Bencher) {
+                bench.iter(reader_munges);
             }
             #[test]
             fn reader_roundtrip() {
@@ -372,6 +380,10 @@ mod tests {
                 let bytes_read = reader2.read_to_end(&mut buf).unwrap();
                 assert_eq!(bytes_read, INPUT.len());
                 assert_eq!(buf, INPUT.as_bytes());
+            }
+            #[bench]
+            fn bench_reader_roundtrip(bench: &mut Bencher) {
+                bench.iter(reader_roundtrip);
             }
             #[test]
             fn writer_munges() {
@@ -401,7 +413,72 @@ mod tests {
             fn bench_writer_roundtrip(bench: &mut Bencher) {
                 bench.iter(writer_roundtrip);
             }
+        }
+        /// Deal with slow and sluggish I/O
+        mod io_slow {
+            use super::*;
+            use std::thread;
+            use std::time::Duration;
 
+            /// Decorate a [Read] such that each read() call is slowed +
+            /// intentionally does _not_ fill up destination output buffer
+            /// ... thereby rewarding batching of I/O.
+            struct SlowReader<T>(T);
+
+            impl<T> SlowReader<T> {
+                fn new(wrapped: T) -> Self {
+                    Self(wrapped)
+                }
+            }
+
+            impl<T> Read for SlowReader<T>
+            where
+                T: Read,
+            {
+                fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                    // Slow down reads
+                    thread::sleep(Duration::from_millis(1));
+
+                    // Read fewer bytes than requested to force caller to try again
+                    // Breaks up read_to_end
+                    let limit = buf.len().min(1);
+                    self.0.read(&mut buf[..limit])
+                }
+            }
+
+            #[test]
+            fn slow_reader_munges() {
+                let mut reader = Xorcism::new(KEY).reader(SlowReader::new(INPUT.as_bytes()));
+                let mut buf = [0u8; INPUT.len()];
+                let mut total_bytes_read = 0;
+
+                while total_bytes_read < buf.len() {
+                    // Just try once to read. The SlowReader will intentionally
+                    // provide less than what was asked for [as the Read trait allows].
+                    let bytes_read = reader.read(&mut buf[total_bytes_read..]).unwrap();
+
+                    total_bytes_read += bytes_read;
+
+                    assert!(bytes_read > 0, "some bytes should be read");
+                    assert_eq!(
+                        &buf[..total_bytes_read],
+                        &EXPECT[..total_bytes_read],
+                        "destinatino buffer should contain xor-ed output"
+                    );
+                    assert!(
+                        &buf[total_bytes_read..].iter().all(|n| *n == 0),
+                        "destination buffer excess should not be modified. read() return length is under reporting changes."
+                    );
+                }
+            }
+
+            #[bench]
+            fn bench_slow_reader_munges(bench: &mut Bencher) {
+                bench.iter(slow_reader_munges)
+            }
+
+            /// Decorate a [Write] such that each write() call is slowed,
+            /// thereby rewarding batching of I/O
             struct SlowWriter<T>(T);
 
             impl<T> SlowWriter<T> {
