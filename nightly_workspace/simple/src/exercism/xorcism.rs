@@ -2,6 +2,7 @@
 
 // #[cfg(feature = "io")]
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 /// A munger which XORs a key with some data
 #[derive(Clone)]
 pub struct Xorcism<'a> {
@@ -14,7 +15,10 @@ impl<'a> Xorcism<'a> {
     /// Create a new Xorcism munger from a key
     ///
     /// Should accept anything which has a cheap conversion to a byte slice.
-    pub fn new<Key>(key: &Key) -> Xorcism<'a> {
+    pub fn new<Key>(key: &Key) -> Xorcism<'a>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
         todo!()
     }
 
@@ -42,11 +46,31 @@ impl<'a> Xorcism<'a> {
 
     // #[cfg(feature = "io")]
     pub fn reader(self, unscrambled_src: impl Read) -> impl Read {
-        todo!()
+        XorcismReader(PhantomData)
     }
 
     // #[cfg(feature = "io")]
     pub fn writer(self, scrambled_sink: impl Write) -> impl Write {
+        XorcismWriter(PhantomData)
+    }
+}
+
+struct XorcismReader<'a>(PhantomData<&'a [u8]>);
+
+impl<'a> Read for XorcismReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        todo!()
+    }
+}
+
+struct XorcismWriter<'a>(PhantomData<&'a [u8]>);
+
+impl<'a> Write for XorcismWriter<'a> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        todo!()
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
         todo!()
     }
 }
