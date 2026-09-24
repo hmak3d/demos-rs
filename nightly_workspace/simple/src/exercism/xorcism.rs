@@ -1,25 +1,45 @@
 //! re: <https://exercism.org/tracks/rust/exercises/xorcism/edit>
+//!
+//! ## Key ideas
+//!
+//! * Carry lifetimes `<'a>` of original into all data structures
+//! * `IntoIterator<Item: Borrow<u8>>` trait bound to accept fn parameters: `&[u8]`, `Vec<u8>`, `Vec<&u8>`, etc
+//! * `AsRef<[u8]>` trait bound to accept fn parameters: `&[u8]`, `&str`
+//! * `&Key` instead of `Key` fn parameter type to prevent compile error
+//!     ```text
+//!     returns a value referencing data owned by the current function
+//!     ```
+//! * `?Sized` trait bound so `&str` can be fn parameter `key: &Key` as `str` is unsized
+//!
+//! ```sh
+//! $ cargo test xorcism
+//! ```
 
+use std::borrow::Borrow;
 // #[cfg(feature = "io")]
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 /// A munger which XORs a key with some data
 #[derive(Clone)]
 pub struct Xorcism<'a> {
-    // This field is just to suppress compiler complaints;
-    // feel free to delete it at any point.
-    phantom: std::marker::PhantomData<&'a u8>,
+    key: &'a [u8],
+
+    // key[offset] is the next XOR value to use
+    offset: usize,
 }
 
 impl<'a> Xorcism<'a> {
     /// Create a new Xorcism munger from a key
     ///
     /// Should accept anything which has a cheap conversion to a byte slice.
-    pub fn new<Key>(key: &Key) -> Xorcism<'a>
+    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    // NB: param is &Key instead of Key to avoid compile error: returns a value referencing data owned by the current function
     where
-        Key: AsRef<[u8]> + ?Sized,
+        Key: AsRef<[u8]> + ?Sized, // key can be: &[u8], &str
     {
-        todo!()
+        Self {
+            key: key.as_ref(),
+            offset: 0,
+        }
     }
 
     /// XOR each byte of the input buffer with a byte from the key.
@@ -27,7 +47,11 @@ impl<'a> Xorcism<'a> {
     /// Note that this is stateful: repeated calls are likely to produce different results,
     /// even with identical inputs.
     pub fn munge_in_place(&mut self, data: &mut [u8]) {
-        todo!()
+        for (i /* : usize */, n /* : &mut u8 */) in data.iter_mut().enumerate() {
+            *n ^= self.key[(i + self.offset) % self.key.len()]
+        }
+        // Prepare next xor to use different part of key
+        self.offset += data.len();
     }
 
     /// XOR each byte of the data with a byte from the key.
@@ -37,41 +61,84 @@ impl<'a> Xorcism<'a> {
     ///
     /// Should accept anything which has a cheap conversion to a byte iterator.
     /// Shouldn't matter whether the byte iterator's values are owned or borrowed.
-    pub fn munge<Data>(&mut self, data: Data) -> impl Iterator<Item = u8> {
-        todo!();
-        // this empty iterator silences a compiler complaint that
-        // () doesn't implement ExactSizeIterator
-        std::iter::empty()
+    ///
+    /// The signature is the elision of:
+    /// ```no-compile
+    /// pub fn munge<'s, 'data, 'iter, Data>(
+    ///     &'s mut self,
+    ///     src: Data,
+    /// ) -> impl Iterator<Item = u8> + 'iter
+    /// where
+    ///     Data: IntoIterator<Item: Borrow<u8>> + 'data,
+    ///     // Iterator is valid only as long as its dependencies
+    ///     'data: 'iter, // iter uses src
+    ///     's: 'iter,    // iter uses self.key + self.offset
+    /// ```
+    pub fn munge<Data>(&mut self, src: Data) -> impl Iterator<Item = u8>
+    where
+        Data: IntoIterator<Item: Borrow<u8>>, // e.g., &[u8], Vec<u8>, Vec<&u8>
+    {
+        src.into_iter().map(|n /* : impl Borrow<u8> */| -> u8 {
+            let transformed = *n.borrow() ^ self.key[self.offset % self.key.len()];
+            // Prepare next xor to use different part of key
+            self.offset += 1;
+            transformed
+        })
     }
 
     // #[cfg(feature = "io")]
-    pub fn reader(self, unscrambled_src: impl Read) -> impl Read {
-        XorcismReader(PhantomData)
+    pub fn reader(self, src: impl Read) -> impl Read {
+        XorcismReader { engine: self, src }
     }
 
     // #[cfg(feature = "io")]
-    pub fn writer(self, scrambled_sink: impl Write) -> impl Write {
-        XorcismWriter(PhantomData)
+    pub fn writer(self, sink: impl Write) -> impl Write {
+        XorcismWriter { engine: self, sink }
     }
 }
 
-struct XorcismReader<'a>(PhantomData<&'a [u8]>);
+/// [Read] adapter that modifies data on read
+struct XorcismReader<'a, R>
+where
+    R: Read,
+{
+    engine: Xorcism<'a>,
+    /// Original source (used as xor input)
+    src: R,
+}
 
-impl<'a> Read for XorcismReader<'a> {
+impl<'a, R> Read for XorcismReader<'a, R>
+where
+    R: Read, // for self.src.read()
+{
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
+        let len = self.src.read(buf)?;
+        self.engine.munge_in_place(buf);
+        Ok(len)
     }
 }
 
-struct XorcismWriter<'a>(PhantomData<&'a [u8]>);
+/// [Write] adapter that modifies data on write
+struct XorcismWriter<'a, W> {
+    engine: Xorcism<'a>,
+    /// Destination sink (used as xor output)
+    sink: W,
+}
 
-impl<'a> Write for XorcismWriter<'a> {
+impl<'a, W> Write for XorcismWriter<'a, W>
+where
+    W: Write, // for self.sink.write()
+{
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        todo!()
+        let mut len = 0;
+        for datum in self.engine.munge(buf) {
+            len += self.sink.write(&[datum])?;
+        }
+        Ok(len)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        todo!()
+        self.sink.flush()
     }
 }
 
