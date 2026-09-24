@@ -25,7 +25,7 @@ impl Position {
 ///
 /// ## Design
 ///
-/// We use [Box<[MaybeUninit<T>]>] instead of [Vec<Option<T>>].
+/// We use [Box<[`MaybeUninit<T>`]>] instead of [`Vec<Option<T>>`].
 /// This is to keep memory footprint small (as Option will bloat each entry).
 /// However, it comes at the cost of manually managing memory w/ unsafe code.
 pub struct CircularBuffer<T> {
