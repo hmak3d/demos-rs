@@ -1,9 +1,48 @@
 //! re: <https://exercism.org/tracks/rust/exercises/circular-buffer/edit>
+//!
+//! ```sh
+//! $ cargo test circular_buffer
+//!
+//! $ cargo miri test circular_buffer
+//! ```
 
+use std::mem::MaybeUninit;
+
+#[derive(PartialEq, Eq, Debug)]
+struct Position(usize);
+
+impl Position {
+    fn advance(&self, capacity: usize) -> Position {
+        self.incr(1, capacity)
+    }
+
+    fn incr(&self, n: usize, capacity: usize) -> Position {
+        Position((self.0 + n) % capacity)
+    }
+}
+
+/// Circular buffer impl.
+///
+/// ## Design
+///
+/// We use [Box<[MaybeUninit<T>]>] instead of [Vec<Option<T>>].
+/// This is to keep memory footprint small (as Option will bloat each entry).
+/// However, it comes at the cost of manually managing memory w/ unsafe code.
 pub struct CircularBuffer<T> {
-    // We fake using T here, so the compiler does not complain that
-    // "parameter `T` is never used". Delete when no longer needed.
-    phantom: std::marker::PhantomData<T>,
+    data: Box<[MaybeUninit<T>]>,
+
+    len: usize,
+
+    // invariant: data[read_pos..write_position()] values are initialized when (len > 0) where
+    // - upper bound exclusive [like normal slice notation]
+    // - positions are modulo adjusted ... i.e., write_position() can wrap around
+    //
+    // Therefore:
+    // (read_pos == write_position()) => empty or full [depending on len]
+
+    // data[read_pos                                      ] is next value to read from
+    // data[write_position() = (read_pos + len % capacity)] is next value to write to
+    read_pos: Position,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -14,35 +53,84 @@ pub enum Error {
 
 impl<T> CircularBuffer<T> {
     pub fn new(capacity: usize) -> Self {
-        todo!(
-            "Construct a new CircularBuffer with the capacity to hold {}.",
-            match capacity {
-                1 => "1 element".to_string(),
-                _ => format!("{capacity} elements"),
-            }
-        );
+        Self {
+            data: Box::<[T]>::new_uninit_slice(capacity),
+            len: 0,
+            read_pos: Position(0),
+        }
     }
 
-    pub fn write(&mut self, _element: T) -> Result<(), Error> {
-        todo!(
-            "Write the passed element to the CircularBuffer or return FullBuffer error if CircularBuffer is full."
-        );
+    fn capacity(&self) -> usize {
+        // fixed array length is max capacity
+        self.data.len()
+    }
+
+    fn write_position(&self) -> Position {
+        self.read_pos.incr(self.len, self.capacity())
+    }
+
+    pub fn write(&mut self, element: T) -> Result<(), Error> {
+        if self.len == self.capacity() {
+            return Err(Error::FullBuffer);
+        }
+
+        // Make MaybeUninit initialized
+        self.data[self.write_position().0].write(element);
+
+        // Advance write pos
+        self.len += 1;
+        Ok(())
     }
 
     pub fn read(&mut self) -> Result<T, Error> {
-        todo!(
-            "Read the oldest element from the CircularBuffer or return EmptyBuffer error if CircularBuffer is empty."
-        );
+        if self.len == 0 {
+            return Err(Error::EmptyBuffer);
+        }
+
+        // data[read_pos] has data
+        // => take it and reset MaybeUninit slot state to unitiailized
+        let element = std::mem::replace(&mut self.data[self.read_pos.0], MaybeUninit::uninit());
+
+        // Advance read pos, keeping write pos the same
+        self.read_pos = self.read_pos.advance(self.capacity());
+        self.len -= 1;
+
+        // SAFETY: All values between data[orig(read_pos)..write_position()] are valid when (orig(len) > 0)
+        Ok(unsafe { element.assume_init() })
     }
 
     pub fn clear(&mut self) {
-        todo!("Clear the CircularBuffer.");
+        // Drop all elements between data[read_pos..write_position()] (modulo adjusted)
+        while self.read().is_ok() {}
     }
 
-    pub fn overwrite(&mut self, _element: T) {
-        todo!(
-            "Write the passed element to the CircularBuffer, overwriting the existing elements if CircularBuffer is full."
-        );
+    pub fn overwrite(&mut self, element: T) {
+        if self.len == self.capacity() {
+            // NB: Like in empty case, the full case has (read_pos == write_position())
+            assert_eq!(self.read_pos, self.write_position());
+
+            // full => drop old element, replacing it with new one
+            let mut old_element =
+                std::mem::replace(&mut self.data[self.read_pos.0], MaybeUninit::new(element));
+
+            // SAFETY: All values between data[orig(read_pos)..write_position()] are valid when (orig(len) > 0)
+            unsafe { old_element.assume_init_drop() };
+
+            // Advance read pos [so read() won't return the dropped value]
+            self.read_pos = self.read_pos.advance(self.capacity());
+        } else {
+            // len < capacity => just insert
+            self.data[self.write_position().0].write(element);
+
+            // Advance write pos
+            self.len += 1;
+        }
+    }
+}
+
+impl<T> Drop for CircularBuffer<T> {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 
