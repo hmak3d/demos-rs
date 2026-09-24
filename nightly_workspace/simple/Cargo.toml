@@ -22,6 +22,9 @@ par_letters_raw_chunks = []
 # Use custom impl of mpmc channel instead of nightly mpmc
 par_letters_my_mpmc = []
 
+# Buffer writes by xorcism::writer()
+xorcism_buffered_write = []
+
 [lints.rust]
 # Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
 # Pass `--check-cfg cfg(...)` args to rustc.
