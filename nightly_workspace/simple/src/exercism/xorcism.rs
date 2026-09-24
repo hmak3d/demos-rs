@@ -41,6 +41,7 @@ pub struct Xorcism<'a> {
     key: &'a [u8],
 
     // key[offset] is the next XOR value to use
+    // As such, offset in range [0, key.len()) (exclusive upper)
     offset: usize,
 }
 
@@ -64,11 +65,18 @@ impl<'a> Xorcism<'a> {
     /// Note that this is stateful: repeated calls are likely to produce different results,
     /// even with identical inputs.
     pub fn munge_in_place(&mut self, data: &mut [u8]) {
-        for (i /* : usize */, n /* : &mut u8 */) in data.iter_mut().enumerate() {
-            *n ^= self.key[(i + self.offset) % self.key.len()]
+        // "cycle" idea from: https://exercism.org/tracks/rust/exercises/xorcism/solutions/PaulDance
+        for (key_item /* : &u8 */, datum_mut /* : &mut u8 */) in self
+            .key
+            .iter()
+            .cycle()
+            .skip(self.offset)
+            .zip(data.iter_mut())
+        {
+            *datum_mut ^= *key_item
         }
         // Prepare next xor to use different part of key
-        self.offset += data.len();
+        self.offset = (self.offset + data.len()) % self.key.len();
     }
 
     /// XOR each byte of the data with a byte from the key.
@@ -95,12 +103,13 @@ impl<'a> Xorcism<'a> {
     where
         Data: IntoIterator<Item: Borrow<u8>>, // e.g., &[u8], Vec<u8>, Vec<&u8>
     {
-        src.into_iter().map(|n /* : impl Borrow<u8> */| -> u8 {
-            let transformed = *n.borrow() ^ self.key[self.offset % self.key.len()];
-            // Prepare next xor to use different part of key
-            self.offset += 1;
-            transformed
-        })
+        self.key.iter().cycle().skip(self.offset).zip(src).map(
+            |(key_item /* : &u8 */, src_item /* : impl Borrow<u8> */)| -> u8 {
+                // Prepare next xor to use different part of key
+                self.offset = (self.offset + 1) % self.key.len();
+                *key_item ^ *src_item.borrow()
+            },
+        )
     }
 
     // #[cfg(feature = "io")]
