@@ -99,17 +99,22 @@ impl<'a> Xorcism<'a> {
     ///     'data: 'iter, // iter uses src
     ///     's: 'iter,    // iter uses self.key + self.offset
     /// ```
-    pub fn munge<Data>(&mut self, src: Data) -> impl Iterator<Item = u8>
+    pub fn munge<Data>(&mut self, src: Data) -> impl ExactSizeIterator<Item = u8>
     where
-        Data: IntoIterator<Item: Borrow<u8>>, // e.g., &[u8], Vec<u8>, Vec<&u8>
+        Data: IntoIterator,
+        <Data as IntoIterator>::Item: Borrow<u8>, // e.g., &[u8], Vec<u8>, Vec<&u8>
+        <Data as IntoIterator>::IntoIter: ExactSizeIterator, // so return can impl ExactSizeIterator
     {
-        self.key.iter().cycle().skip(self.offset).zip(src).map(
-            |(key_item /* : &u8 */, src_item /* : impl Borrow<u8> */)| -> u8 {
-                // Prepare next xor to use different part of key
-                self.offset = (self.offset + 1) % self.key.len();
-                *key_item ^ *src_item.borrow()
-            },
-        )
+        // NB: Avoid src.into_iter().zip(key_iter) because we want return to impl
+        // ExactSizeIterator
+        let mut key_iter = self.key.iter().cycle().skip(self.offset);
+        src.into_iter().map(move |datum /* : impl Borrow<u8> */| {
+            // Prepare next xor to use different part of key
+            self.offset = (self.offset + 1) % self.key.len();
+
+            // unwrap() cannot fail on cycle() iterator
+            *datum.borrow() ^ *key_iter.next().unwrap()
+        })
     }
 
     // #[cfg(feature = "io")]
