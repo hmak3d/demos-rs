@@ -130,7 +130,7 @@ where
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let len = self.src.read(buf)?;
-        self.engine.munge_in_place(buf);
+        self.engine.munge_in_place(&mut buf[..len]);
         Ok(len)
     }
 }
