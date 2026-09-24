@@ -13,6 +13,17 @@
 //!
 //! ```sh
 //! $ cargo test xorcism
+//! $ cargo test xorcism -F xorcism_buffered_write
+//!
+//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io::bench_'
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_slow_writer_munges ... bench:   7,614,420.80 ns/iter (+/- 139,507.97)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges      ... bench:          17.14 ns/iter (+/- 0.77)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip   ... bench:          17.13 ns/iter (+/- 0.11)
+//!
+//! $ cargo bench 'xorcism::tests::key_shorter_than_data::io::bench_' -F xorcism_buffered_write
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_slow_writer_munges ... bench:   1,271,620.80 ns/iter (+/- 102,329.10)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_munges      ... bench:          47.42 ns/iter (+/- 1.70)
+//! test exercism::xorcism::tests::key_shorter_than_data::io::bench_writer_roundtrip   ... bench:          75.94 ns/iter (+/- 1.76)
 //! ```
 
 use std::borrow::Borrow;
@@ -129,12 +140,21 @@ impl<'a, W> Write for XorcismWriter<'a, W>
 where
     W: Write, // for self.sink.write()
 {
+    #[cfg(not(feature = "xorcism_buffered_write"))]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut len = 0;
         for datum in self.engine.munge(buf) {
             len += self.sink.write(&[datum])?;
         }
         Ok(len)
+    }
+
+    #[cfg(feature = "xorcism_buffered_write")]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut tmp_buf = Vec::with_capacity(buf.len());
+        tmp_buf.extend_from_slice(buf);
+        self.engine.munge_in_place(&mut tmp_buf);
+        self.sink.write(&tmp_buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -144,7 +164,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
     use super::*;
+    use test::Bencher;
 
     #[test]
     fn munge_in_place_identity() {
@@ -330,6 +352,9 @@ mod tests {
         // #[cfg(feature = "io")]
         mod io {
             use super::*;
+            use std::thread;
+            use std::time::Duration;
+
             #[test]
             fn reader_munges() {
                 let mut reader = Xorcism::new(KEY).reader(INPUT.as_bytes());
@@ -357,6 +382,10 @@ mod tests {
                 }
                 assert_eq!(writer_dest, EXPECT);
             }
+            #[bench]
+            fn bench_writer_munges(bench: &mut Bencher) {
+                bench.iter(writer_munges);
+            }
             #[test]
             fn writer_roundtrip() {
                 let mut writer_dest = Vec::new();
@@ -367,6 +396,48 @@ mod tests {
                     assert!(writer2.write_all(INPUT.as_bytes()).is_ok());
                 }
                 assert_eq!(writer_dest, INPUT.as_bytes());
+            }
+            #[bench]
+            fn bench_writer_roundtrip(bench: &mut Bencher) {
+                bench.iter(writer_roundtrip);
+            }
+
+            struct SlowWriter<T>(T);
+
+            impl<T> SlowWriter<T> {
+                fn new(wrapped: T) -> Self {
+                    Self(wrapped)
+                }
+            }
+
+            impl<T> Write for SlowWriter<T>
+            where
+                T: Write,
+            {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    thread::sleep(Duration::from_millis(1));
+                    self.0.write(buf)
+                }
+
+                fn flush(&mut self) -> std::io::Result<()> {
+                    thread::sleep(Duration::from_millis(1));
+                    self.0.flush()
+                }
+            }
+
+            #[test]
+            fn slow_writer_munges() {
+                let mut writer_dest = SlowWriter::new(Vec::new());
+                {
+                    let mut writer = Xorcism::new(KEY).writer(&mut writer_dest);
+                    assert!(writer.write_all(INPUT.as_bytes()).is_ok());
+                }
+                assert_eq!(writer_dest.0, EXPECT);
+            }
+
+            #[bench]
+            fn bench_slow_writer_munges(bench: &mut Bencher) {
+                bench.iter(slow_writer_munges)
             }
         }
     }
