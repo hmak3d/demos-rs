@@ -3,7 +3,7 @@
 // Use std::sync::mpmc
 #![cfg_attr(not(feature = "par_letters_my_mpmc"), feature(mpmc_channel))]
 // For Bencher
-#![feature(test)]
+#![cfg_attr(test, feature(test))]
 // Use nightly-only feature to silence error in memoize_fn.rs:
 //      error[E0183]: manual implementations of `std::ops::FnOnce` are experimental
 //        --> simple/src/memoize_fn.rs:21:15
