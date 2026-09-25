@@ -1,8 +1,28 @@
 //! re: <https://exercism.org/tracks/rust/exercises/react/edit>
+//!
+//! Implement reactor pattern where updating one Cell can cascade refresh other Cell's that depend on it.
+//!
+//! # There are 2 approaches:
+//!
+//! We currently have implemented Approach A, and net yet B.
+//!
+//! ## Approach A: Use interior mutabity on the cells. Pass non-mut &Reactor everywhere
+//!
+//! Pros:
+//! * Easier to implement
+//!
+//! ## Approach B: Avoid interior mutability. Use &mut Reactor everyone. This means "flattening" the function call stack
+//!   ... splitting up (1) find-the-cells to update from (2) updating the cells.
+//!
+//! Pros:
+//! * More robus final implementation. Do more compile time checks. Eliminate the possiblity of RefCell::borrow/borrow_mut() panicking
+//! * Make ping-pong code calls between Reactor vs Cell less likely. The borrow checker will complain more often.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+//////////////////////////////////////////////////////////////////////////////// IDs
 
 static NEXT_CELL_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -125,9 +145,11 @@ impl<T: Copy + PartialEq> InputContent<T> {
 //////////////////////////////////////////////////////////////////////////////// ComputeContent
 
 struct ComputeContent<'cb, T> {
-    id: ComputeCellId,
     value: std::cell::Cell<Option<T>>,
     depended_by: HashSet<CellId>,
+    // FIXME hmak Eliminate interior mutability. We need to get refresh() to work
+    // ... otherwise &Reactor overlaps with &mut Reactor otherwise and we cannot
+    // compile calls from Reactor::set_value() -> ComputeContent::refresh()
     callbacks: RefCell<HashMap<CallbackId, Box<dyn FnMut(T) + 'cb>>>,
     dependencies: RefCell<Vec<CellId>>,
     #[expect(clippy::type_complexity)]
@@ -135,13 +157,8 @@ struct ComputeContent<'cb, T> {
 }
 
 impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
-    fn new(
-        id: ComputeCellId,
-        dependencies: &[CellId],
-        formula: impl Fn(&[T]) -> T + 'static,
-    ) -> Self {
+    fn new(dependencies: &[CellId], formula: impl Fn(&[T]) -> T + 'static) -> Self {
         Self {
-            id,
             value: std::cell::Cell::new(None),
             depended_by: HashSet::new(),
             callbacks: RefCell::new(HashMap::new()),
@@ -151,14 +168,7 @@ impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
     }
 
     /// Returns whether or not refreshed value was changed
-    fn refresh(&self, reactor: &Reactor<T>, visited_cell_ids: &mut HashSet<CellId>) -> bool {
-        let my_id = CellId::Compute(self.id);
-
-        if !visited_cell_ids.insert(my_id) {
-            // already visited => so nothing new was changed
-            return false;
-        }
-
+    fn refresh(&self, reactor: &Reactor<T>) -> bool {
         // Get dependency values
         let dep_values = self
             .dependencies
@@ -212,7 +222,7 @@ impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
     }
 }
 
-//////////////////////////////////////////////////////////////////////////////// ComputeContent
+//////////////////////////////////////////////////////////////////////////////// Reactor
 
 #[derive(Default)]
 pub struct Reactor<'cb, T> {
@@ -263,17 +273,27 @@ where
         F: Fn(&[T]) -> T + 'static,
     {
         let compute_cell_id = ComputeCellId::new();
-        let cell_id = CellId::Compute(compute_cell_id);
+        let new_cell_id = CellId::Compute(compute_cell_id);
 
-        for dependency_id in dependencies {
-            let cell = self.cells.get_mut(dependency_id).ok_or(*dependency_id)?;
-            cell.add_depended_by(cell_id);
+        // Verify dependencies are valid
+        let mut ok_dependency_ids: Vec<CellId> = Vec::new();
+        for &dependency_id in dependencies {
+            if !self.cells.contains_key(&dependency_id) {
+                return Err(dependency_id);
+            }
+            ok_dependency_ids.push(dependency_id);
         }
 
-        let content = ComputeContent::new(compute_cell_id, dependencies, formula);
-        content.refresh(self, &mut HashSet::new());
+        // Make dependencies know they are depended on by us
+        for dependency_id in ok_dependency_ids {
+            let cell = self.cells.get_mut(&dependency_id).unwrap();
+            cell.add_depended_by(new_cell_id);
+        }
 
-        self.cells.insert(cell_id, Cell::Compute(content));
+        let content = ComputeContent::new(dependencies, formula);
+        content.refresh(self);
+
+        self.cells.insert(new_cell_id, Cell::Compute(content));
 
         Ok(compute_cell_id)
     }
@@ -298,46 +318,56 @@ where
     //
     // As before, that turned out to add too much extra complexity.
     pub fn set_value(&mut self, id: InputCellId, new_value: T) -> bool {
-        let mut depender_cell_ids: VecDeque<CellId> = VecDeque::new();
-
-        if let Some(cell) = self.cells.get(&CellId::Input(id)) {
-            // Set cell value
-            if let Cell::Input(content) = cell {
-                if content.set_value(new_value) {
-                    depender_cell_ids.extend(cell.get_depended_by());
-                }
-            } else {
-                return false;
-            }
-        } else {
+        let cell_id = CellId::Input(id);
+        let cell = self.cells.get(&cell_id);
+        let Some(cell) = cell else {
             return false;
         };
+        let Cell::Input(content) = cell else {
+            unreachable!()
+        };
+        if content.set_value(new_value) {
+            let mut topo_sorted_ids = self.topo_sort(cell_id);
 
-        // Do BFS on tree where cells point to their dependers (i.e., cells
-        // whose formula depend on them).
-        // Do *not* do DFS as we want to update "furthest" cells last. i.e.,
-        // (d) after (b) + (c)
-        // a -> b -> d
-        // |         ^
-        // \--> c ---/
-        // where the arrows are "reversed" (i.e., point from dependency to depender)
-        let mut visited_ids = HashSet::new();
-        while let Some(id) = depender_cell_ids.pop_front() {
-            // Dependency cell ID always valid because we never delete cells
-            let cell = self.cells.get(&id).unwrap();
-            match cell {
-                Cell::Input(_) => unreachable!(),
-                Cell::Compute(content) => {
-                    if content.refresh(self, &mut visited_ids) {
-                        // recursively propagate changes to dependers
-                        depender_cell_ids.extend(cell.get_depended_by());
-                    }
-                    // else don't propagate changes if current value hasn't changed
-                }
+            // burn through the starting point
+            assert_eq!(topo_sorted_ids.next(), Some(cell_id));
+
+            for id in topo_sorted_ids {
+                let Cell::Compute(content) = self.cells.get(&id).unwrap() else {
+                    unreachable!()
+                };
+                content.refresh(self);
             }
         }
-
         true
+    }
+
+    /// Return all cells reachable from a cell
+    /// flattened + sorted such that all edges go into same direction.
+    /// The starting cell is included in the results (as first element.
+    ///
+    /// Earlier cells will always "points" to later cells.
+    /// * aka treat each edge as node must-come-before
+    /// * aka reading results from left-to-right, all edges go from left to right
+    /// * aka if edge is (depended_on -> depender) => depended_on's will come first
+    fn topo_sort(&self, id: CellId) -> impl Iterator<Item = CellId> {
+        let mut out = Vec::new();
+        let mut visited = HashSet::new();
+        self.topo_sort_helper(id, &mut out, &mut visited);
+        out.into_iter().rev()
+    }
+
+    fn topo_sort_helper(&self, id: CellId, out: &mut Vec<CellId>, visited: &mut HashSet<CellId>) {
+        if !visited.insert(id) {
+            return;
+        }
+        let cell = self.cells.get(&id).unwrap();
+        for depender_id in cell.get_depended_by() {
+            self.topo_sort_helper(depender_id, out, visited);
+        }
+        // For topo sort, the starting node is accumulated "last"
+        visited.insert(id);
+        out.push(id);
     }
 
     // Adds a callback to the specified compute cell.
