@@ -26,4 +26,5 @@
 #![feature(fn_traits)]
 
 pub mod exercism;
+pub mod graph;
 pub mod memoize_fn;
