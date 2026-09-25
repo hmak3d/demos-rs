@@ -1,6 +1,7 @@
 //! re: <https://exercism.org/tracks/rust/exercises/react/edit>
 
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_CELL_ID: AtomicUsize = AtomicUsize::new(0);
@@ -61,98 +62,157 @@ pub enum RemoveCallbackError {
     NonexistentCallback,
 }
 
+//////////////////////////////////////////////////////////////////////////////// Cell
+
 enum Cell<'cb, T> {
     Input(InputContent<T>),
     Compute(ComputeContent<'cb, T>),
 }
 
-impl<'cb, T> Cell<'cb, T>
-where
-    T: Copy,
-{
-    fn value(&self) -> T
-    where
-        T: Copy,
-    {
+impl<'cb, T: Copy> Cell<'cb, T> {
+    fn value(&self) -> T {
         match self {
-            Cell::Input(content) => content.value,
-            Cell::Compute(content) => content.value.unwrap(),
+            Cell::Input(content) => content.value.get(),
+            Cell::Compute(content) => content.value.get().unwrap(),
         }
     }
 
     fn add_depended_by(&mut self, cell_id: CellId) {
         match self {
-            Cell::Input(content) => content.depended_by.insert(cell_id),
-            Cell::Compute(content) => content.depended_by.insert(cell_id),
-        };
-    }
-
-    /*
-    fn notify(&self, reactor: &Reactor<T>) {
-        let value = self.value();
-        let callbacks = match self {
-            Cell::Input(_) => unreachable!(),
-            Cell::Compute(content) => &mut content.callbacks,
-        };
-        // notify all callbacks for this current cell
-        for callback in callbacks.values_mut() {
-            (callback)(value)
-        }
-        // recursively notify all callbacks that depend on current cell
-        let depended_by_ids = match self {
             Cell::Input(content) => &mut content.depended_by,
             Cell::Compute(content) => &mut content.depended_by,
-        };
-        for cell_id in depended_by_ids.iter() {
-            let cell = reactor.cells.get_mut(&cell_id).unwrap();
-            cell.notify(reactor);
         }
+        .insert(cell_id);
     }
-    */
+
+    fn get_depended_by(&self) -> impl Iterator<Item = CellId> {
+        match self {
+            Cell::Input(content) => &content.depended_by,
+            Cell::Compute(content) => &content.depended_by,
+        }
+        .iter()
+        .copied()
+    }
 }
+
+//////////////////////////////////////////////////////////////////////////////// InputContent
 
 struct InputContent<T> {
-    value: T,
+    value: std::cell::Cell<T>,
     depended_by: HashSet<CellId>,
 }
 
-impl<T> InputContent<T>
-where
-    T: Copy,
-{
-    fn set_value(&mut self, value: T) {
-        self.value = value;
+impl<T: Copy + PartialEq> InputContent<T> {
+    fn new(value: T) -> Self
+    where
+        T: Copy + PartialEq,
+    {
+        Self {
+            value: std::cell::Cell::new(value),
+            depended_by: HashSet::new(),
+        }
+    }
+
+    fn set_value(&self, value: T) -> bool {
+        let changed = self.value.get() != value;
+        if changed {
+            self.value.set(value);
+        }
+        changed
     }
 }
+
+//////////////////////////////////////////////////////////////////////////////// ComputeContent
 
 struct ComputeContent<'cb, T> {
-    value: Option<T>,
+    id: ComputeCellId,
+    value: std::cell::Cell<Option<T>>,
     depended_by: HashSet<CellId>,
-    callbacks: HashMap<CallbackId, Box<dyn FnMut(T) + 'cb>>,
-    dependencies: Vec<CellId>,
-    formula: DynFormula<T>,
+    callbacks: RefCell<HashMap<CallbackId, Box<dyn FnMut(T) + 'cb>>>,
+    dependencies: RefCell<Vec<CellId>>,
+    #[expect(clippy::type_complexity)]
+    formula: Box<dyn Fn(&[T]) -> T>,
 }
 
-impl<'cb, T> ComputeContent<'cb, T>
-where
-    T: Copy,
-{
-    fn refresh(&mut self, reactor: &mut Reactor<T>) -> Result<(), CellId> {
+impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
+    fn new(
+        id: ComputeCellId,
+        dependencies: &[CellId],
+        formula: impl Fn(&[T]) -> T + 'static,
+    ) -> Self {
+        Self {
+            id,
+            value: std::cell::Cell::new(None),
+            depended_by: HashSet::new(),
+            callbacks: RefCell::new(HashMap::new()),
+            dependencies: RefCell::new(dependencies.to_vec()),
+            formula: Box::new(formula),
+        }
+    }
+
+    /// Returns whether or not refreshed value was changed
+    fn refresh(&self, reactor: &Reactor<T>, visited_cell_ids: &mut HashSet<CellId>) -> bool {
+        let my_id = CellId::Compute(self.id);
+
+        if !visited_cell_ids.insert(my_id) {
+            // already visited => so nothing new was changed
+            return false;
+        }
+
+        // Get dependency values
         let dep_values = self
             .dependencies
+            .borrow()
             .iter()
-            .map(|id| reactor.cells.get(id).map(|cell| cell.value()).ok_or(*id))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|id| {
+                reactor
+                    .cells
+                    .get(id)
+                    .map(|cell| cell.value())
+                    // Dependencies are checked when we create cells.
+                    // We never delete cells.
+                    // => The dependencies should always be valid
+                    .expect("invalid dependency")
+            })
+            .collect::<Vec<T>>();
+
+        // Use formula to recalculate value
         let value = (self.formula)(&dep_values);
-        self.value = Some(value);
-        for callback in self.callbacks.values_mut() {
-            (callback)(value);
+
+        let changed = if let Some(old_value) = self.value.get() {
+            old_value != value
+        } else {
+            true
+        };
+
+        if changed {
+            self.value.set(Some(value));
+
+            // Notify callbacks of the change
+            for callback in self.callbacks.borrow_mut().values_mut() {
+                (callback)(value);
+            }
         }
-        Ok(())
+        changed
+    }
+
+    fn add_callback<F>(&self, callback: F) -> CallbackId
+    where
+        F: FnMut(T) + 'cb,
+    {
+        let callback_id = CallbackId::new();
+        self.callbacks
+            .borrow_mut()
+            .insert(callback_id, Box::new(callback));
+        callback_id
+    }
+
+    fn remove_callback(&self, callback_id: CallbackId) -> bool {
+        self.callbacks.borrow_mut().remove(&callback_id).is_some()
     }
 }
 
-type DynFormula<T> = Box<dyn Fn(&[T]) -> T>;
+//////////////////////////////////////////////////////////////////////////////// ComputeContent
 
 #[derive(Default)]
 pub struct Reactor<'cb, T> {
@@ -175,13 +235,8 @@ where
         let input_cell_id = InputCellId::new();
         let cell_id = CellId::Input(input_cell_id);
 
-        self.cells.insert(
-            cell_id,
-            Cell::Input(InputContent {
-                value: initial,
-                depended_by: HashSet::new(),
-            }),
-        );
+        self.cells
+            .insert(cell_id, Cell::Input(InputContent::new(initial)));
 
         input_cell_id
     }
@@ -215,16 +270,10 @@ where
             cell.add_depended_by(cell_id);
         }
 
-        let mut cell_content = ComputeContent {
-            value: None,
-            depended_by: HashSet::new(),
-            callbacks: HashMap::new(),
-            dependencies: dependencies.to_vec(),
-            formula: Box::new(formula),
-        };
-        cell_content.refresh(self)?;
+        let content = ComputeContent::new(compute_cell_id, dependencies, formula);
+        content.refresh(self, &mut HashSet::new());
 
-        self.cells.insert(cell_id, Cell::Compute(cell_content));
+        self.cells.insert(cell_id, Cell::Compute(content));
 
         Ok(compute_cell_id)
     }
@@ -249,22 +298,46 @@ where
     //
     // As before, that turned out to add too much extra complexity.
     pub fn set_value(&mut self, id: InputCellId, new_value: T) -> bool {
-        let cell = self.cells.get_mut(&CellId::Input(id)).and_then(|cell| {
+        let mut depender_cell_ids: VecDeque<CellId> = VecDeque::new();
+
+        if let Some(cell) = self.cells.get(&CellId::Input(id)) {
+            // Set cell value
             if let Cell::Input(content) = cell {
-                content.set_value(new_value);
-                Some(cell)
+                if content.set_value(new_value) {
+                    depender_cell_ids.extend(cell.get_depended_by());
+                }
             } else {
-                None
+                return false;
             }
-        });
-        // NB: Must notify after setting cell above because we can't have nested &mut self above
-        if let Some(cell) = cell {
-            // FIXME hmak notify callbacks of changes
-            // cell.notify(self);
-            true
         } else {
-            false
+            return false;
+        };
+
+        // Do BFS on tree where cells point to their dependers (i.e., cells
+        // whose formula depend on them).
+        // Do *not* do DFS as we want to update "furthest" cells last. i.e.,
+        // (d) after (b) + (c)
+        // a -> b -> d
+        // |         ^
+        // \--> c ---/
+        // where the arrows are "reversed" (i.e., point from dependency to depender)
+        let mut visited_ids = HashSet::new();
+        while let Some(id) = depender_cell_ids.pop_front() {
+            // Dependency cell ID always valid because we never delete cells
+            let cell = self.cells.get(&id).unwrap();
+            match cell {
+                Cell::Input(_) => unreachable!(),
+                Cell::Compute(content) => {
+                    if content.refresh(self, &mut visited_ids) {
+                        // recursively propagate changes to dependers
+                        depender_cell_ids.extend(cell.get_depended_by());
+                    }
+                    // else don't propagate changes if current value hasn't changed
+                }
+            }
         }
+
+        true
     }
 
     // Adds a callback to the specified compute cell.
@@ -283,14 +356,12 @@ where
     where
         F: FnMut(T) + 'cb,
     {
-        self.cells.get_mut(&CellId::Compute(id)).and_then(|cell| {
-            if let Cell::Compute(content) = cell {
-                let callback_id = CallbackId::new();
-                content.callbacks.insert(callback_id, Box::new(callback));
-                Some(callback_id)
-            } else {
-                None
-            }
+        self.cells.get_mut(&CellId::Compute(id)).map(|cell| {
+            let Cell::Compute(content) = cell else {
+                // ComputeCellId only maps to Cell::Compute
+                unreachable!()
+            };
+            content.add_callback(callback)
         })
     }
 
@@ -304,24 +375,18 @@ where
         cell_id: ComputeCellId,
         callback_id: CallbackId,
     ) -> Result<(), RemoveCallbackError> {
-        let content_mut = self
+        let cell = self
             .cells
             .get_mut(&CellId::Compute(cell_id))
-            .and_then(|cell| {
-                if let Cell::Compute(content) = cell {
-                    Some(content)
-                } else {
-                    None
-                }
-            })
             .ok_or(RemoveCallbackError::NonexistentCell)?;
 
-        let _callback = content_mut
-            .callbacks
-            .remove(&callback_id)
-            .ok_or(RemoveCallbackError::NonexistentCallback)?;
+        let Cell::Compute(content) = cell else {
+            unreachable!()
+        };
 
-        Ok(())
+        content
+            .remove_callback(callback_id)
+            .ok_or(RemoveCallbackError::NonexistentCallback)
     }
 }
 
