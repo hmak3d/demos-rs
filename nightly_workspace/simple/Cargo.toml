@@ -30,6 +30,9 @@ xorcism_buffered_write = []
 # NB: Disabling this will break tests.
 graph_sorted_nodes = []
 
+# Use trait objects [instead of static dispatch via enum] to get cell dependencies
+react_dyn_get_dependencies = []
+
 [lints.rust]
 # Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
 # Pass `--check-cfg cfg(...)` args to rustc.
