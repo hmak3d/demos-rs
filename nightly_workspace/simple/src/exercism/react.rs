@@ -4,7 +4,7 @@
 //!
 //! # There are 2 approaches:
 //!
-//! We currently have implemented Approach A, and net yet B.
+//! We've implemented Approach B
 //!
 //! ## Approach A: Use interior mutabity on the cells. Pass non-mut &Reactor everywhere
 //!
@@ -18,8 +18,10 @@
 //! * More robust final implementation. Do more compile time checks. Eliminate the possiblity of RefCell::borrow/borrow_mut() panicking
 //! * Make ping-pong code calls between Reactor vs Cell less likely. The borrow checker will complain more often.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::iter;
+#[cfg(not(feature = "react_dyn_get_dependencies"))]
+use std::iter::{Copied, Empty};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 //////////////////////////////////////////////////////////////////////////////// IDs
@@ -120,8 +122,8 @@ impl<'cb, T: Copy> Cell<'cb, T> {
     /// Return cell value
     fn value(&self) -> T {
         match self {
-            Cell::Input(content) => content.value.get(),
-            Cell::Compute(content) => content.value.get().unwrap(),
+            Cell::Input(content) => content.value,
+            Cell::Compute(content) => content.value.unwrap(),
         }
     }
 
@@ -143,12 +145,70 @@ impl<'cb, T: Copy> Cell<'cb, T> {
         .iter()
         .copied()
     }
+
+    #[cfg(not(feature = "react_dyn_get_dependencies"))]
+    /// Get dependencies (cells we depend on)
+    fn get_dependencies(&self) -> impl Iterator<Item = CellId> + '_
+    where
+        T: Copy + PartialEq,
+    {
+        // RPIT can only have one hidden type, but we want to branch on two.
+        // Work around this by using static dispatch via enum.
+        // Pros (vs trait objects):
+        // - Is more performant
+        //   - Avoid runtime overhead from trait object vtable lookup
+        //   - Avoid heap allocation
+        match self {
+            Cell::Input(_) => EitherIterator::Empty(iter::empty()),
+            Cell::Compute(content) => EitherIterator::Copied(content.get_dependencies()),
+        }
+    }
+
+    #[cfg(feature = "react_dyn_get_dependencies")]
+    /// Get dependencies (cells we depend on)
+    fn get_dependencies(&self) -> Box<dyn Iterator<Item = CellId> + '_>
+    where
+        T: Copy + PartialEq,
+    {
+        // RPIT can only have one hidden type, but we want to branch on two.
+        // Work around this by using trait objects.
+        // Pros:
+        // - Is simpler to implement (vs static dispatch via enum)
+        // - Code has better encapsulation ... can hide more implementation details in lower layers.
+        //   We can refactor get_dependencies() impl to be different without
+        //   affecting caller signatures.
+        match self {
+            Cell::Input(_) => Box::new(iter::empty()),
+            Cell::Compute(content) => Box::new(content.get_dependencies()),
+        }
+    }
+}
+
+#[cfg(not(feature = "react_dyn_get_dependencies"))]
+enum EitherIterator<'a, T> {
+    Empty(Empty<T>),
+    Copied(Copied<std::slice::Iter<'a, T>>),
+}
+
+#[cfg(not(feature = "react_dyn_get_dependencies"))]
+impl<'a, T> Iterator for EitherIterator<'a, T>
+where
+    T: Copy,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            EitherIterator::Empty(wrapped) => wrapped.next(),
+            EitherIterator::Copied(wrapped) => wrapped.next(),
+        }
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////// InputContent
 
 struct InputContent<T> {
-    value: std::cell::Cell<T>,
+    value: T,
 
     /// IDs of cells that depend on us
     depended_by: HashSet<CellId>,
@@ -160,15 +220,15 @@ impl<T: Copy + PartialEq> InputContent<T> {
         T: Copy + PartialEq,
     {
         Self {
-            value: std::cell::Cell::new(value),
+            value,
             depended_by: HashSet::new(),
         }
     }
 
-    fn set_value(&self, value: T) -> bool {
-        let changed = self.value.get() != value;
+    fn set_value(&mut self, value: T) -> bool {
+        let changed = self.value != value;
         if changed {
-            self.value.set(value);
+            self.value = value;
         }
         changed
     }
@@ -177,16 +237,16 @@ impl<T: Copy + PartialEq> InputContent<T> {
 //////////////////////////////////////////////////////////////////////////////// ComputeContent
 
 struct ComputeContent<'cb, T> {
-    value: std::cell::Cell<Option<T>>,
+    value: Option<T>,
 
     /// IDs of cells that depend on us
     depended_by: HashSet<CellId>,
 
     /// IDs of cells that we depend on
-    dependencies: RefCell<Vec<CellId>>,
+    dependencies: Vec<CellId>,
 
     /// Callbacks to notify when value is changed
-    callbacks: RefCell<HashMap<CallbackId, Box<dyn FnMut(T) + 'cb>>>,
+    callbacks: HashMap<CallbackId, Box<dyn FnMut(T) + 'cb>>,
 
     /// Formula to apply to generate value from dependencies
     #[expect(clippy::type_complexity)]
@@ -196,68 +256,61 @@ struct ComputeContent<'cb, T> {
 impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
     fn new(dependencies: &[CellId], formula: impl Fn(&[T]) -> T + 'cb) -> Self {
         Self {
-            value: std::cell::Cell::new(None),
+            value: None, // none is a transient placeholder, recalculate_value() will overwrite this
             depended_by: HashSet::new(),
-            callbacks: RefCell::new(HashMap::new()),
-            dependencies: RefCell::new(dependencies.to_vec()),
+            callbacks: HashMap::new(),
+            dependencies: dependencies.to_vec(),
             formula: Box::new(formula),
         }
+    }
+
+    #[cfg(not(feature = "react_dyn_get_dependencies"))]
+    fn get_dependencies(&self) -> Copied<std::slice::Iter<'_, CellId>> {
+        // NB: Can *not* use RPIT [unlike trait object version below] because
+        // the caller needs to name the type [in order to use EitherIterator]
+        self.dependencies.iter().copied()
+    }
+
+    #[cfg(feature = "react_dyn_get_dependencies")]
+    fn get_dependencies(&self) -> impl Iterator<Item = CellId> {
+        self.dependencies.iter().copied()
     }
 
     /// Recalculate value using formula on dependencies
     ///
     /// Returns whether or not refreshed value was changed
-    fn recalculate_value(&self, reactor: &Reactor<T>) -> bool {
-        // Get dependency values
-        let dep_values = self
-            .dependencies
-            .borrow()
-            .iter()
-            .map(|id| {
-                reactor
-                    .cells
-                    .get(id)
-                    .map(|cell| cell.value())
-                    // Dependencies are checked when we create cells.
-                    // We never delete cells.
-                    // => The dependencies should always be valid
-                    .expect("invalid dependency")
-            })
-            .collect::<Vec<T>>();
-
-        // Use formula to recalculate value
+    fn recalculate_value(&mut self, dep_values: &[T]) -> bool {
+        // Apply formula to recalculate value
         let value = (self.formula)(&dep_values);
 
-        let changed = if let Some(old_value) = self.value.get() {
+        let changed = if let Some(old_value) = self.value {
             old_value != value
         } else {
             true
         };
 
         if changed {
-            self.value.set(Some(value));
+            self.value = Some(value);
 
             // Notify callbacks of the change
-            for callback in self.callbacks.borrow_mut().values_mut() {
+            for callback in self.callbacks.values_mut() {
                 (callback)(value);
             }
         }
         changed
     }
 
-    fn add_callback<F>(&self, callback: F) -> CallbackId
+    fn add_callback<F>(&mut self, callback: F) -> CallbackId
     where
         F: FnMut(T) + 'cb,
     {
         let callback_id = CallbackId::new();
-        self.callbacks
-            .borrow_mut()
-            .insert(callback_id, Box::new(callback));
+        self.callbacks.insert(callback_id, Box::new(callback));
         callback_id
     }
 
-    fn remove_callback(&self, callback_id: CallbackId) -> bool {
-        self.callbacks.borrow_mut().remove(&callback_id).is_some()
+    fn remove_callback(&mut self, callback_id: CallbackId) -> bool {
+        self.callbacks.remove(&callback_id).is_some()
     }
 }
 
@@ -324,13 +377,13 @@ where
         }
 
         // Make dependencies know they are depended on by us
-        for dependency_id in ok_dependency_ids {
-            let cell = self.cells.get_mut(&dependency_id).unwrap();
+        for dependency_id in &ok_dependency_ids {
+            let cell = self.cells.get_mut(dependency_id).unwrap();
             cell.add_depended_by(new_cell_id);
         }
 
-        let content = ComputeContent::new(dependencies, formula);
-        content.recalculate_value(self);
+        let mut content = ComputeContent::new(dependencies, formula);
+        content.recalculate_value(&self.get_cell_values(ok_dependency_ids).collect::<Vec<_>>());
 
         self.cells.insert(new_cell_id, Cell::Compute(content));
 
@@ -358,7 +411,7 @@ where
     // As before, that turned out to add too much extra complexity.
     pub fn set_value(&mut self, input_cell_id: InputCellId, new_value: T) -> bool {
         let cell_id = CellId::Input(input_cell_id);
-        let cell = self.cells.get(&cell_id);
+        let cell = self.cells.get_mut(&cell_id);
         let Some(cell) = cell else {
             return false;
         };
@@ -371,14 +424,40 @@ where
             // Burn through the starting cell (it's the only one that is not a compute cell but instead an input cell)
             assert_eq!(topo_sorted_ids.next(), Some(cell_id));
 
-            for id in topo_sorted_ids {
-                let Cell::Compute(content) = self.cells.get(&id).unwrap() else {
+            for cell_id in topo_sorted_ids {
+                // NB: Get dependency value _before_ current &mut Cell so we don't overlap &self
+                // vs &mut self lifetimes ... avoid compiler error
+                let dep_values = self.get_dependency_values_for_cell(cell_id);
+                let Cell::Compute(content) = self.cells.get_mut(&cell_id).unwrap() else {
                     unreachable!()
                 };
-                content.recalculate_value(self);
+                content.recalculate_value(&dep_values);
             }
         }
         true
+    }
+
+    fn get_dependency_values_for_cell(&self, cell_id: CellId) -> Vec<T> {
+        let cell = self
+            .cells
+            .get(&cell_id)
+            .unwrap_or_else(|| panic!("cannot get dependencies for non-exist cell {cell_id:?}"));
+
+        // We return collection instead of returning iterator straight up.
+        // This is so we can release the &self hold, allowing caller to caller
+        // to acquire &mut self for other activity (i.e., improve this method's
+        // ergonomics/utility by tightening method to _not_ hold &self reference
+        // longer than it has to).
+        self.get_cell_values(cell.get_dependencies()).collect()
+    }
+
+    fn get_cell_values(
+        &self,
+        cell_ids: impl IntoIterator<Item = CellId>,
+    ) -> impl Iterator<Item = T> {
+        cell_ids
+            .into_iter()
+            .map(|cell_id| self.cells.get(&cell_id).unwrap().value())
     }
 
     /// Return all cells reachable from a cell
@@ -393,25 +472,32 @@ where
     /// NB: `use<T>` so that impl Iterator does _not_ unncessary capture
     /// lifetime of &self as would be the default (aka
     /// `use<'self_receiver_lifetime, 'cb, T>`)
-    fn topo_sort(&self, id: CellId) -> impl Iterator<Item = CellId> + use<T> {
+    ///
+    /// **ATTN**: This method will panic if cell given to method does not exist
+    fn topo_sort(&self, cell_id: CellId) -> impl Iterator<Item = CellId> + use<T> {
         // precise capture use<> needed to avoid ret value having 'self lifetime bound
         let mut out = Vec::new();
         let mut visited = HashSet::new();
-        self.topo_sort_helper(id, &mut out, &mut visited);
+        self.topo_sort_helper(cell_id, &mut out, &mut visited);
         out.into_iter().rev()
     }
 
-    fn topo_sort_helper(&self, id: CellId, out: &mut Vec<CellId>, visited: &mut HashSet<CellId>) {
-        if !visited.insert(id) {
+    fn topo_sort_helper(
+        &self,
+        cell_id: CellId,
+        out: &mut Vec<CellId>,
+        visited: &mut HashSet<CellId>,
+    ) {
+        if !visited.insert(cell_id) {
             return;
         }
-        let cell = self.cells.get(&id).unwrap();
+        let cell = self.cells.get(&cell_id).unwrap();
         for depender_id in cell.get_depended_by() {
             self.topo_sort_helper(depender_id, out, visited);
         }
         // For topo sort, the starting node is accumulated "last"
-        visited.insert(id);
-        out.push(id);
+        visited.insert(cell_id);
+        out.push(cell_id);
     }
 
     // Adds a callback to the specified compute cell.
