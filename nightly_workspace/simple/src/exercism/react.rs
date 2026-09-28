@@ -26,10 +26,10 @@ use std::iter::{Copied, Empty};
 
 //////////////////////////////////////////////////////////////////////////////// IDs
 
-/// Define `struct $type_name(usize)` and other ceremonies to enable it to be hashable, etc
+/// Define `struct $type_name(usize)` and other ceremonies to enable it to be in [HashMap], etc
 ///
 /// e.g.,
-/// ```
+/// ```ignore
 /// define_id_type! {
 ///     /// Some doc comment
 ///     name = MyId,
@@ -38,6 +38,7 @@ use std::iter::{Copied, Empty};
 /// ```
 /// will output
 /// ```ignore
+/// # use std::sync::atomic::{AtomicUsize, Ordering};
 /// /// Counter for generating [MyId]
 /// static NEXT_MY_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
 ///
@@ -281,7 +282,7 @@ impl<'cb, T: Copy + PartialEq> ComputeContent<'cb, T> {
     /// Returns whether or not refreshed value was changed
     fn recalculate_value(&mut self, dep_values: &[T]) -> bool {
         // Apply formula to recalculate value
-        let value = (self.formula)(&dep_values);
+        let value = (self.formula)(dep_values);
 
         let changed = if let Some(old_value) = self.value {
             old_value != value
@@ -555,6 +556,7 @@ where
 
         content
             .remove_callback(callback_id)
+            .then_some(())
             .ok_or(RemoveCallbackError::NonexistentCallback)
     }
 }
