@@ -18,6 +18,7 @@
 //! * More robust final implementation. Do more compile time checks. Eliminate the possiblity of RefCell::borrow/borrow_mut() panicking
 //! * Make ping-pong code calls between Reactor vs Cell less likely. The borrow checker will complain more often.
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 #[cfg(not(feature = "react_dyn_get_dependencies"))]
@@ -367,23 +368,24 @@ where
         let compute_cell_id = ComputeCellId::new();
         let new_cell_id = CellId::Compute(compute_cell_id);
 
-        // Verify dependencies are valid
-        let mut ok_dependency_ids: Vec<CellId> = Vec::new();
-        for &dependency_id in dependencies {
-            if !self.cells.contains_key(&dependency_id) {
-                return Err(dependency_id);
-            }
-            ok_dependency_ids.push(dependency_id);
+        // Reject bad dependencies
+        if let Some(bad_cell_id) = dependencies
+            .iter()
+            .find(|&cell_id| !self.cells.contains_key(cell_id))
+        {
+            return Err(*bad_cell_id);
         }
 
-        // Make dependencies know they are depended on by us
-        for dependency_id in &ok_dependency_ids {
-            let cell = self.cells.get_mut(dependency_id).unwrap();
-            cell.add_depended_by(new_cell_id);
+        // Make dependencies know we depend on them
+        for dependency_id in dependencies {
+            self.cells
+                .get_mut(dependency_id)
+                .unwrap() // We just checked that all dependencies exist, so this cannot fail
+                .add_depended_by(new_cell_id);
         }
 
         let mut content = ComputeContent::new(dependencies, formula);
-        content.recalculate_value(&self.get_cell_values(ok_dependency_ids).collect::<Vec<_>>());
+        content.recalculate_value(&self.get_cell_values(dependencies).collect::<Vec<_>>());
 
         self.cells.insert(new_cell_id, Cell::Compute(content));
 
@@ -441,6 +443,7 @@ where
         let cell = self
             .cells
             .get(&cell_id)
+            // FIXME Don't panic if cell IDs are invalid
             .unwrap_or_else(|| panic!("cannot get dependencies for non-exist cell {cell_id:?}"));
 
         // We return collection instead of returning iterator straight up.
@@ -453,11 +456,12 @@ where
 
     fn get_cell_values(
         &self,
-        cell_ids: impl IntoIterator<Item = CellId>,
+        cell_ids: impl IntoIterator<Item: Borrow<CellId>>,
     ) -> impl Iterator<Item = T> {
         cell_ids
             .into_iter()
-            .map(|cell_id| self.cells.get(&cell_id).unwrap().value())
+            // FIXME Don't panic if cell IDs are invalid
+            .map(|cell_id| self.cells.get(cell_id.borrow()).unwrap().value())
     }
 
     /// Return all cells reachable from a cell
