@@ -23,7 +23,6 @@ use std::collections::{HashMap, HashSet};
 use std::iter;
 #[cfg(not(feature = "react_dyn_get_dependencies"))]
 use std::iter::{Copied, Empty};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 //////////////////////////////////////////////////////////////////////////////// IDs
 
@@ -55,7 +54,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 macro_rules! define_id_type {
     ($(#[$attrs:meta])* name = $type_name:ident, counter = $counter_name:ident $(,)*) => {
         #[doc = concat!(r"Counter for generating [", stringify!($type_name), "]")]
-        static $counter_name: AtomicUsize = AtomicUsize::new(0);
+        static $counter_name: ::std::sync::atomic::AtomicUsize = ::std::sync::atomic::AtomicUsize::new(0);
 
         $(#[$attrs])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,7 +62,7 @@ macro_rules! define_id_type {
 
         impl $type_name {
             fn new() -> Self {
-                Self($counter_name.fetch_add(1, Ordering::Relaxed))
+                Self($counter_name.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed))
             }
         }
     };
