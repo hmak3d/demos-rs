@@ -1,6 +1,7 @@
 //! re: <https://exercism.org/tracks/rust/exercises/forth/edit>
 
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::result::Result as StdResult;
 
@@ -104,6 +105,59 @@ impl Subroutine {
     }
 }
 
+enum Token<'a> {
+    Number(i32),
+    Colon,
+    Semicolon,
+    Symbol(&'a str),
+}
+
+// NB: Cannot impl FromStr (and thus enable str::parse() -> Token) because
+// FromStr::from_str() trait method cannot bind its parameter to 'a of Token
+// i.e., Token return by str::parse() cannot borrow from str
+impl<'a> From<&'a str> for Token<'a> {
+    fn from(s: &'a str) -> Self {
+        match s {
+            ":" => Token::Colon,
+            ";" => Token::Semicolon,
+            s if s.chars().all(char::is_numeric)
+                || (s.starts_with('-')
+                    && s.len() > 1
+                    && s.chars().skip(1).all(char::is_numeric)) =>
+            {
+                // unwrap cannot fail because our match pattern ensures chars are ok
+                Token::Number(s.parse::<Value>().unwrap())
+            }
+            s => Token::Symbol(s),
+        }
+    }
+}
+
+struct Tokenizer<'a, I> {
+    wrapped: I,
+    _phantom: PhantomData<&'a I>,
+}
+
+impl<'a, I> Tokenizer<'a, I> {
+    fn new(wrapped: I) -> Self {
+        Self {
+            wrapped,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, I> Iterator for Tokenizer<'a, I>
+where
+    I: Iterator<Item = &'a str>,
+{
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.wrapped.next().map(|s| s.into())
+    }
+}
+
 impl Forth {
     #[expect(clippy::new_without_default)]
     pub fn new() -> Forth {
@@ -128,17 +182,10 @@ impl Forth {
     }
 
     pub fn eval(&mut self, input: &str) -> Result {
-        let mut tokens = input.split_ascii_whitespace();
-        let sub = self.parse_expression(&mut tokens)?;
+        let mut tokenizer = Tokenizer::new(input.split_ascii_whitespace());
+        let sub = self.parse_expression(&mut tokenizer)?;
         sub.apply(&mut self.stack)?;
         Ok(())
-    }
-
-    fn is_number(token: &str) -> bool {
-        token.chars().all(char::is_numeric)
-            || (token.starts_with('-')
-                && token.len() > 1
-                && token.chars().skip(1).all(char::is_numeric))
     }
 
     /// Parse an expression.
@@ -148,46 +195,45 @@ impl Forth {
     ///
     /// # Args
     /// - tokens - input stream to parse
-    fn parse_expression<'a>(
+    fn parse_expression<'a, 't>(
         &mut self,
-        tokens: &mut impl Iterator<Item = &'a str>,
+        tokenizer: &mut impl Iterator<Item = Token<'t>>,
     ) -> StdResult<Subroutine, Error> {
         let mut steps = Vec::new();
         let mut is_definition_terminated = false;
-        while !is_definition_terminated && let Some(token) = tokens.next() {
+        while !is_definition_terminated && let Some(token) = tokenizer.next() {
             match token {
-                ":" if self.state == State::NormalExpression => {
+                Token::Colon if self.state == State::NormalExpression => {
                     // Define subroutine
 
                     // subroutine name is first thing that follows
-                    let sub_name = tokens
-                        .next()
-                        .ok_or(Error::InvalidWord)?
-                        .to_ascii_lowercase();
-
-                    if Forth::is_number(&sub_name) {
+                    let sub_name = tokenizer.next().ok_or(Error::InvalidWord)?;
+                    let Token::Symbol(sub_name) = sub_name else {
                         return Err(Error::InvalidWord);
-                    }
+                    };
+                    let sub_name = sub_name.to_ascii_lowercase();
 
                     self.state = State::DefiningSubroutine;
-                    let sub = self.parse_expression(tokens)?;
+                    let sub = self.parse_expression(tokenizer)?;
                     self.state = State::NormalExpression;
                     self.subroutines.insert(sub_name, Rc::new(sub));
                 }
-                ";" if self.state == State::DefiningSubroutine => is_definition_terminated = true,
-                token if Forth::is_number(token) => {
+                Token::Semicolon if self.state == State::DefiningSubroutine => {
+                    is_definition_terminated = true
+                }
+                Token::Number(val) => {
                     // Parsed number
-                    let val: Value = token.parse().map_err(|_| Error::InvalidWord)?;
                     steps.push(Rc::new(Subroutine::Push(val)));
                 }
-                sub_name => {
-                    // Apply subroutine
+                Token::Symbol(sub_name) => {
+                    // Indicate call to subroutine
                     let sub = self
                         .subroutines
                         .get(&sub_name.to_ascii_lowercase())
                         .ok_or(Error::UnknownWord)?;
                     steps.push(Rc::clone(sub));
                 }
+                _ => return Err(Error::InvalidWord),
             }
         }
         if self.state == State::DefiningSubroutine && !is_definition_terminated {
