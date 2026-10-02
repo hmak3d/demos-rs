@@ -1,6 +1,34 @@
 /// Check a Luhn checksum.
-pub fn is_valid(code: &str) -> bool {
-    todo!("Is the Luhn checksum for {code} valid?");
+pub fn is_valid(mut code: &str) -> bool {
+    code = code.trim();
+    if code.len() <= 1
+        || code == "0"
+        || code
+            .chars()
+            .any(|ch| !(ch.is_whitespace() || ch.is_ascii_digit()))
+    {
+        return false;
+    }
+
+    let sum = code
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .rev()
+        // .map(|ch| ch.to_string().parse::<u8>().unwrap())
+        .map(|ch| ch.to_digit(10).unwrap())
+        .enumerate()
+        .map(|(i, mut n)| {
+            if i % 2 == 1 {
+                n *= 2;
+                if n > 9 {
+                    n -= 9;
+                }
+            }
+            n
+        })
+        .sum::<u32>();
+
+    sum % 10 == 0
 }
 
 #[cfg(test)]
