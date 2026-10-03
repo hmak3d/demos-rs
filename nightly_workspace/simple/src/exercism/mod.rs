@@ -3,6 +3,7 @@ pub mod doubly_linked_list;
 pub mod forth;
 mod forth_alloc_attack;
 pub mod luhn;
+pub mod luhn_from;
 pub mod par_letters;
 pub mod react;
 pub mod xorcism;
