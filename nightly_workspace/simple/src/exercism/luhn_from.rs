@@ -1,10 +1,58 @@
 //! re: <https://exercism.org/tracks/rust/exercises/luhn-from>
 
-pub struct Luhn;
+use std::marker::PhantomData;
+use std::ops::{BitAnd, Div, Rem};
 
-impl Luhn {
+pub struct Luhn<'a, T>(T, PhantomData<&'a T>);
+
+/// We use [u32] because this simplifies `impl IntoDigitsIterator for str`
+/// (i.e., [char::to_digit] is [u32]). Otherwise, [u8] would have been a better
+/// choice.
+type DigitValue = u32;
+
+/// Main type that abstracts the digits that [Luhn] can consume.
+///
+/// For numeric types collection types ([u8], [u16], [u32], [u64], [usize]),
+/// this is used to by `impl_into_luhn` macro to create [NumericIter].
+///
+/// String types ([str], [String]) have their own implementations.
+pub trait IntoDigitsIterator {
+    type Error;
+
+    fn iter_digits(&self) -> impl Iterator<Item = Result<DigitValue, Self::Error>>;
+}
+
+impl<'a, T> Luhn<'a, T>
+where
+    T: IntoDigitsIterator,
+{
+    #[expect(clippy::manual_is_multiple_of)]
     pub fn is_valid(&self) -> bool {
-        todo!("Determine if the current Luhn struct contains a valid credit card number.");
+        let mut len = 0;
+        let mut sum: DigitValue = 0;
+        for (i, val_from) in self.0.iter_digits().enumerate() {
+            let Ok(val) = val_from else {
+                // IntoDigitsIterator::Error may be:
+                // For str: not a digit char
+                // For u8, u16, ...: impossible/infallible
+                // For u64: <u64 as TryInto>::Error which should *NOT* happen unless there is bug bit arithmetic in NumericIter impl
+                // In all these cases, we'll indicate validation failed
+                return false;
+            };
+            let delta = if i % 2 == 0 {
+                val
+            } else {
+                match val {
+                    0..=4 => 2 * val,
+                    5..=9 => 2 * val - 9,
+                    _ => unreachable!(),
+                }
+            };
+            sum += delta as DigitValue;
+            len += 1;
+        }
+        // len > 1 && sum.is_multiple_of(10)
+        len > 1 && sum % 10 == 0
     }
 }
 
@@ -13,9 +61,97 @@ impl Luhn {
 /// by hand for every other type presented in the test suite,
 /// but your solution will fail if a new type is presented.
 /// Perhaps there exists a better solution for this problem?
-impl From<&str> for Luhn {
-    fn from(input: &str) -> Self {
-        todo!("From the given input '{input}' create a new Luhn struct.");
+impl<'a> From<&'a str> for Luhn<'a, &'a str> {
+    fn from(input: &'a str) -> Self {
+        Luhn(input, PhantomData)
+    }
+}
+
+/// NB: We implement for both [str] and [&str] so that impl `impl IntoDigitsIterator for String`
+/// can call [str::iter_digits] ... having it call `&lt;&amp;str&gt;::iter_digits` directly was not possible.
+impl IntoDigitsIterator for str {
+    type Error = ();
+
+    fn iter_digits(&self) -> impl Iterator<Item = Result<DigitValue, ()>> {
+        self.chars()
+            .rev()
+            .filter(|ch| !ch.is_whitespace())
+            .map(|ch| ch.to_digit(10).ok_or(()))
+    }
+}
+
+impl IntoDigitsIterator for &str {
+    type Error = ();
+
+    fn iter_digits(&self) -> impl Iterator<Item = Result<DigitValue, ()>> {
+        str::iter_digits(self)
+    }
+}
+
+impl<'a> From<String> for Luhn<'a, String> {
+    fn from(input: String) -> Self {
+        Luhn(input, PhantomData)
+    }
+}
+
+impl IntoDigitsIterator for String {
+    type Error = ();
+
+    fn iter_digits(&self) -> impl Iterator<Item = Result<DigitValue, ()>> {
+        str::iter_digits(self)
+    }
+}
+
+/// Prepare numeric "collection" types into something that [Luhn] can iterator over
+/// i.e.,
+/// ```ignore
+/// impl From<u8> for Luhn { ... }
+/// impl IntoDigitsIterator for u8 { ... }
+/// ```
+/// and repeat for u16, etc.
+macro_rules! impl_into_luhn {
+    ($($name:tt),+) => {
+        $(
+            impl<'a> From<$name> for Luhn<'a, $name> {
+                fn from(input: $name) -> Self {
+                    Luhn(input, PhantomData)
+                }
+            }
+
+            impl IntoDigitsIterator for $name {
+                type Error = <$name as TryInto<DigitValue>>::Error;
+
+                fn iter_digits(&self) -> impl Iterator<Item = Result<DigitValue, Self::Error>> {
+                    NumericIter(*self)
+                }
+            }
+        )+
+    };
+}
+
+impl_into_luhn! {u8, u16, u32, u64, usize}
+
+/// [Iterator] that returns the least significant digits of a non-negative number
+pub struct NumericIter<T>(T);
+
+impl<T> Iterator for NumericIter<T>
+where
+    T: Rem<Output = T> + Div<Output = T> + BitAnd<Output = T> + PartialEq + Copy,
+    u8: Into<T>,
+    T: TryInto<DigitValue>,
+{
+    type Item = Result<DigitValue, <T as TryInto<DigitValue>>::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 == 0u8.into() {
+            None
+        } else {
+            let rem = self.0 % 10u8.into();
+            self.0 = self.0 / 10u8.into();
+
+            // NB: Shouldn't fail because &0xFF makes it < T::MAX
+            Some((rem & 0xFFu8.into()).try_into())
+        }
     }
 }
 
