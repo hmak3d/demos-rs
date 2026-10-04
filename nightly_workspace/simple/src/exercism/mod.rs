@@ -4,6 +4,7 @@ pub mod forth;
 mod forth_alloc_attack;
 pub mod luhn;
 pub mod luhn_from;
+pub mod luhn_trait;
 pub mod par_letters;
 pub mod react;
 pub mod xorcism;
