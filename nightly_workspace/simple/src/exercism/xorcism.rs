@@ -2,7 +2,7 @@
 //!
 //! ## Key ideas
 //!
-//! * Carry lifetimes `<'a>` of original into all data structures
+//! * Carry lifetimes `<'key>` of original key into all data structures
 //! * `IntoIterator<Item: Borrow<u8>>` trait bound to accept fn parameters: `&[u8]`, `Vec<u8>`, `Vec<&u8>`, etc
 //! * `AsRef<[u8]>` trait bound to accept fn parameters: `&[u8]`, `&str`
 //! * `&Key` instead of `Key` fn parameter type to prevent compile error
@@ -37,19 +37,19 @@ use std::borrow::Borrow;
 use std::io::{Read, Write};
 /// A munger which XORs a key with some data
 #[derive(Clone)]
-pub struct Xorcism<'a> {
-    key: &'a [u8],
+pub struct Xorcism<'key> {
+    key: &'key [u8],
 
     // key[offset] is the next XOR value to use
     // As such, offset in range [0, key.len()) (exclusive upper)
     offset: usize,
 }
 
-impl<'a> Xorcism<'a> {
+impl<'key> Xorcism<'key> {
     /// Create a new Xorcism munger from a key
     ///
     /// Should accept anything which has a cheap conversion to a byte slice.
-    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    pub fn new<Key>(key: &'key Key) -> Xorcism<'key>
     // NB: param is &Key instead of Key to avoid compile error: returns a value referencing data owned by the current function
     where
         Key: AsRef<[u8]> + ?Sized, // key can be: &[u8], &str
@@ -101,12 +101,15 @@ impl<'a> Xorcism<'a> {
     /// ```
     ///
     /// NB: For 2024 Edition, can:
-    /// - elide `use<'s, 'a, Data>`
+    /// - elide `use<'_, 'key, Data>`
+    ///
     /// NB: '_ refers to &self
+    ///
+    /// NB: 'key needed because of &self.key usage
     pub fn munge<Data>(
         &mut self,
         src: Data,
-    ) -> impl ExactSizeIterator<Item = u8> + use<'_, 'a, Data>
+    ) -> impl ExactSizeIterator<Item = u8> + use<'_, 'key, Data>
     where
         Data: IntoIterator,
         <Data as IntoIterator>::Item: Borrow<u8>, // e.g., &[u8], Vec<u8>, Vec<&u8>
@@ -125,10 +128,10 @@ impl<'a> Xorcism<'a> {
     }
 
     // #[cfg(feature = "io")]
-    // NB: For 2024 Edition, can:
-    // - elide `use<'a, R>`
-    // - replace generic type parameter R with APIT
-    pub fn reader<R>(self, src: R) -> impl Read + use<'a, R>
+    /// NB: For 2024 Edition, can:
+    /// - elide `use<'key, R>`
+    /// - replace generic type parameter `R` with APIT (name was only needed for `use<>`)
+    pub fn reader<R>(self, src: R) -> impl Read + use<'key, R>
     where
         R: Read,
     {
@@ -136,10 +139,10 @@ impl<'a> Xorcism<'a> {
     }
 
     // #[cfg(feature = "io")]
-    // NB: For 2024 Edition, can:
-    // - elide `use<'a, W>`
-    // - replace generic type parameter W with APIT
-    pub fn writer<W>(self, sink: W) -> impl Write + use<'a, W>
+    /// NB: For 2024 Edition, can:
+    /// - elide `use<'key, W>`
+    /// - replace generic type parameter `W` with APIT (name was only needed for `use<>`)
+    pub fn writer<W>(self, sink: W) -> impl Write + use<'key, W>
     where
         W: Write,
     {
@@ -148,16 +151,17 @@ impl<'a> Xorcism<'a> {
 }
 
 /// [Read] adapter that "unscrambles" data on read
-struct XorcismReader<'a, R>
+struct XorcismReader<'key, R>
 where
     R: Read,
 {
-    engine: Xorcism<'a>,
+    engine: Xorcism<'key>,
+
     /// Original source (used as xor input)
     src: R,
 }
 
-impl<'a, R> Read for XorcismReader<'a, R>
+impl<'key, R> Read for XorcismReader<'key, R>
 where
     R: Read, // for self.src.read()
 {
@@ -169,13 +173,14 @@ where
 }
 
 /// [Write] adapter that "scrambles" data on write
-struct XorcismWriter<'a, W> {
-    engine: Xorcism<'a>,
+struct XorcismWriter<'key, W> {
+    engine: Xorcism<'key>,
+
     /// Destination sink (used as xor output)
     sink: W,
 }
 
-impl<'a, W> Write for XorcismWriter<'a, W>
+impl<'key, W> Write for XorcismWriter<'key, W>
 where
     W: Write, // for self.sink.write()
 {

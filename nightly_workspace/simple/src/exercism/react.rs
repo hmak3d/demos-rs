@@ -138,9 +138,11 @@ impl<'cb, T: Copy> Cell<'cb, T> {
     }
 
     /// Get dependers
+    ///
     /// NB: For 2024 Edition, can:
-    /// - elide `use<'_, 'cb, T>`
-    /// NB: '_ refers to &self and 'cb
+    /// - elide `use<'_, T>`
+    ///
+    /// NB: '_ refers to &self
     fn get_depended_by(&self) -> impl Iterator<Item = CellId> + use<'_, T> {
         match self {
             Cell::Input(content) => &content.depended_by,
@@ -457,10 +459,11 @@ where
         self.get_cell_values(cell.get_dependencies()).collect()
     }
 
-    // NB: For 2024 Edition, can:
-    // - elide `use<'s, 'cb, I, T>`
-    // - replace generic type parameter I with APIT
-    /// NB: '_ refers to &self and 'cb
+    /// NB: For 2024 Edition, can:
+    /// - elide `use<'s, 'cb, I, T>`
+    /// - replace generic type parameter I with APIT
+    ///
+    /// NB: '_ refers to &self
     fn get_cell_values<I>(&self, cell_ids: I) -> impl Iterator<Item = T> + use<'_, I, T>
     where
         I: IntoIterator<Item: Borrow<CellId>>,
