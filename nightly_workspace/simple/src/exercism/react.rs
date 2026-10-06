@@ -711,11 +711,9 @@ mod tests {
         let output = reactor
             .create_compute(&[CellId::Input(input)], |v| v[0] + 1)
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 3));
         cb.expect_to_have_been_called_with(4);
     }
@@ -763,11 +761,9 @@ mod tests {
                 |v| if v[0] < 3 { 111 } else { 222 },
             )
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 2));
         cb.expect_not_to_have_been_called();
         assert!(reactor.set_value(input, 4));
@@ -781,11 +777,9 @@ mod tests {
         let output = reactor
             .create_compute(&[CellId::Input(input)], |v| v[0] + 1)
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 2));
         cb.expect_to_have_been_called_with(3);
         assert!(reactor.set_value(input, 3));
@@ -803,16 +797,12 @@ mod tests {
         let minus_one = reactor
             .create_compute(&[CellId::Input(input)], |v| v[0] - 1)
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(plus_one, |v| cb1.callback_called(v))
-                .is_some()
-        );
-        assert!(
-            reactor
-                .add_callback(minus_one, |v| cb2.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(plus_one, |v| cb1.callback_called(v))
+            .is_some());
+        assert!(reactor
+            .add_callback(minus_one, |v| cb2.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 10));
         cb1.expect_to_have_been_called_with(11);
         cb2.expect_to_have_been_called_with(9);
@@ -830,20 +820,16 @@ mod tests {
         let callback = reactor
             .add_callback(output, |v| cb1.callback_called(v))
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb2.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb2.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 31));
         cb1.expect_to_have_been_called_with(32);
         cb2.expect_to_have_been_called_with(32);
         assert!(reactor.remove_callback(output, callback).is_ok());
-        assert!(
-            reactor
-                .add_callback(output, |v| cb3.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb3.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 41));
         cb1.expect_not_to_have_been_called();
         cb2.expect_to_have_been_called_with(42);
@@ -861,11 +847,9 @@ mod tests {
         let callback = reactor
             .add_callback(output, |v| cb1.callback_called(v))
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb2.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb2.callback_called(v))
+            .is_some());
         // We want the first remove to be Ok, but the others should be errors.
         assert!(reactor.remove_callback(output, callback).is_ok());
         for _ in 1..5 {
@@ -898,11 +882,9 @@ mod tests {
                 |v| v[0] * v[1],
             )
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(output, |v| cb.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(output, |v| cb.callback_called(v))
+            .is_some());
         assert!(reactor.set_value(input, 4));
         cb.expect_to_have_been_called_with(10);
     }
@@ -923,11 +905,9 @@ mod tests {
                 |v| v[0] - v[1],
             )
             .unwrap();
-        assert!(
-            reactor
-                .add_callback(always_two, |v| cb.callback_called(v))
-                .is_some()
-        );
+        assert!(reactor
+            .add_callback(always_two, |v| cb.callback_called(v))
+            .is_some());
         for i in 2..5 {
             assert!(reactor.set_value(input, i));
             cb.expect_not_to_have_been_called();
