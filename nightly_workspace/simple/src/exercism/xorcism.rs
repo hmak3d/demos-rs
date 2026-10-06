@@ -99,7 +99,14 @@ impl<'a> Xorcism<'a> {
     ///     'data: 'iter, // iter uses src
     ///     's: 'iter,    // iter uses self.key + self.offset
     /// ```
-    pub fn munge<Data>(&mut self, src: Data) -> impl ExactSizeIterator<Item = u8>
+    ///
+    /// NB: For 2024 Edition, can:
+    /// - elide `use<'s, 'a, Data>`
+    /// NB: '_ refers to &self
+    pub fn munge<Data>(
+        &mut self,
+        src: Data,
+    ) -> impl ExactSizeIterator<Item = u8> + use<'_, 'a, Data>
     where
         Data: IntoIterator,
         <Data as IntoIterator>::Item: Borrow<u8>, // e.g., &[u8], Vec<u8>, Vec<&u8>
@@ -118,12 +125,24 @@ impl<'a> Xorcism<'a> {
     }
 
     // #[cfg(feature = "io")]
-    pub fn reader(self, src: impl Read) -> impl Read {
+    // NB: For 2024 Edition, can:
+    // - elide `use<'a, R>`
+    // - replace generic type parameter R with APIT
+    pub fn reader<R>(self, src: R) -> impl Read + use<'a, R>
+    where
+        R: Read,
+    {
         XorcismReader { engine: self, src }
     }
 
     // #[cfg(feature = "io")]
-    pub fn writer(self, sink: impl Write) -> impl Write {
+    // NB: For 2024 Edition, can:
+    // - elide `use<'a, W>`
+    // - replace generic type parameter W with APIT
+    pub fn writer<W>(self, sink: W) -> impl Write + use<'a, W>
+    where
+        W: Write,
+    {
         XorcismWriter { engine: self, sink }
     }
 }

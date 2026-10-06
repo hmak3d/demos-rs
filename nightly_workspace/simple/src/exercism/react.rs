@@ -138,7 +138,10 @@ impl<'cb, T: Copy> Cell<'cb, T> {
     }
 
     /// Get dependers
-    fn get_depended_by(&self) -> impl Iterator<Item = CellId> {
+    /// NB: For 2024 Edition, can:
+    /// - elide `use<'_, 'cb, T>`
+    /// NB: '_ refers to &self and 'cb
+    fn get_depended_by(&self) -> impl Iterator<Item = CellId> + use<'_, T> {
         match self {
             Cell::Input(content) => &content.depended_by,
             Cell::Compute(content) => &content.depended_by,
@@ -454,10 +457,14 @@ where
         self.get_cell_values(cell.get_dependencies()).collect()
     }
 
-    fn get_cell_values(
-        &self,
-        cell_ids: impl IntoIterator<Item: Borrow<CellId>>,
-    ) -> impl Iterator<Item = T> {
+    // NB: For 2024 Edition, can:
+    // - elide `use<'s, 'cb, I, T>`
+    // - replace generic type parameter I with APIT
+    /// NB: '_ refers to &self and 'cb
+    fn get_cell_values<I>(&self, cell_ids: I) -> impl Iterator<Item = T> + use<'_, I, T>
+    where
+        I: IntoIterator<Item: Borrow<CellId>>,
+    {
         cell_ids
             .into_iter()
             // FIXME Don't panic if cell IDs are invalid

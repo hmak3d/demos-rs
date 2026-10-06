@@ -46,7 +46,9 @@ pub mod node {
             self.adj.extend(ids);
         }
 
-        pub fn get_all_adjacent(&self) -> impl Iterator<Item = NodeId> {
+        // NB: For 2024 Edition, can:
+        // - elide `use<'_, T>`
+        pub fn get_all_adjacent(&self) -> impl Iterator<Item = NodeId> + use<'_, T> {
             self.adj.iter().copied()
         }
     }

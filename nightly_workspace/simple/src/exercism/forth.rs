@@ -201,7 +201,12 @@ impl Forth {
     ) -> StdResult<Subroutine, Error> {
         let mut steps = Vec::new();
         let mut is_definition_terminated = false;
-        while !is_definition_terminated && let Some(token) = tokenizer.next() {
+        while let Some(token) = tokenizer.next() {
+            // cannot put if condition while loop above due to 2021 edition error:
+            //  error: let chains are only allowed in Rust 2024 or later
+            if !is_definition_terminated {
+                break;
+            }
             match token {
                 Token::Colon if self.state == State::NormalExpression => {
                     // Define subroutine
