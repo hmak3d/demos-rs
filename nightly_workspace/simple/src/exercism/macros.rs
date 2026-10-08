@@ -2,8 +2,13 @@
 
 #[macro_export]
 macro_rules! hashmap {
-    () => {
-        todo!()
+    ($($key:tt => $value:expr),* $(,)?) => {
+        {
+            #[allow(unused_mut)]
+            let mut map = ::std::collections::HashMap::new();
+            $(map.insert($key, $value);)*
+            map
+        }
     };
 }
 
