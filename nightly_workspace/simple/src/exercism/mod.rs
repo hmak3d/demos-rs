@@ -5,6 +5,8 @@ mod forth_alloc_attack;
 pub mod luhn;
 pub mod luhn_from;
 pub mod luhn_trait;
+pub mod macros;
+pub mod macros_compile_fail_tests;
 pub mod par_letters;
 pub mod react;
 pub mod xorcism;
