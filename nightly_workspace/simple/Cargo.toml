@@ -33,6 +33,9 @@ graph_sorted_nodes = []
 # Use trait objects [instead of static dispatch via enum] to get cell dependencies
 react_dyn_get_dependencies = []
 
+# Use 100% functional iterator methods instead of for loops
+ocr_numbers_functional = []
+
 [lints.rust]
 # Spell check `#[cfg(doubly_linked_list_impl = "alt")]` etc in the code.
 # Pass `--check-cfg cfg(...)` args to rustc.

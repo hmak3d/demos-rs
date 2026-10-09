@@ -1,5 +1,11 @@
 // For Iterator::array_chunks()
-#![cfg_attr(not(feature = "par_letters_raw_chunks"), feature(iter_array_chunks))]
+#![cfg_attr(
+    any(
+        not(feature = "par_letters_raw_chunks"),
+        feature = "ocr_numbers_functional"
+    ),
+    feature(iter_array_chunks)
+)]
 // Use std::sync::mpmc
 #![cfg_attr(not(feature = "par_letters_my_mpmc"), feature(mpmc_channel))]
 // For Bencher
