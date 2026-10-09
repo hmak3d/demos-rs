@@ -7,6 +7,7 @@ pub mod luhn_from;
 pub mod luhn_trait;
 pub mod macros;
 pub mod macros_compile_fail_tests;
+pub mod ocr_numbers;
 pub mod par_letters;
 pub mod react;
 pub mod xorcism;
