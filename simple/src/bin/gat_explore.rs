@@ -1,8 +1,10 @@
 //! How to capture lifetimes for return type of higher kinded functions.
 //!
-//! RPIT in context of lower kind can use `+ use<>` but RPIT cannot.
-//! But for higher kinded, you cannot use that.
-//! Instead a Generic Associated Type (GAT) within a trait needs be returned.
+//! A function that is RPIT can `+ use<>` for good ergonomics.
+//! However, if that function itself uses RPIT for its return value, this doesn't work.
+//! Instead, a Generic Associated Type (GAT) within a trait needs be returned.
+//!
+//! See [GAT RFC 1598](https://rust-lang.github.io/rfcs/1598-generic_associated_types.html)
 
 #[derive(Default)]
 struct Entry {
@@ -12,7 +14,7 @@ struct Entry {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Attempt #1: Broken naive impl (only works with &str)
+// Attempt #1: Broken naive impl (only works with projections to &str)
 
 fn get_width_str_ref<'a>(
     entries: impl IntoIterator<Item = &'a Entry>,
@@ -26,7 +28,7 @@ fn get_width_str_ref<'a>(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Attempt #2: Broken generic attempt (only works for *owned* impl of AsRef)
+// Attempt #2: Broken generic attempt (only works for projections that are *owned* impl of AsRef)
 
 fn get_width_owned_only<'a, F, S>(
     entries: impl IntoIterator<Item = &'a Entry>,
@@ -34,7 +36,11 @@ fn get_width_owned_only<'a, F, S>(
 ) -> usize
 where
     F: Fn(&Entry) -> S,
-    S: AsRef<str>, // This cannot _not_ capture lifetine &Entry of F => will force get_field() to only return owned/static types, not borrowed types
+    // This cannot _not_ capture lifetine &Entry parameter of of F
+    // => will force get_field() to only return owned/static types, never borrowed types
+    S: AsRef<str>,
+    // The following is _not_ possible
+    // S: AsRef<str> + use<lifetime of &Entry>
 {
     entries
         .into_iter()
@@ -44,31 +50,56 @@ where
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Attempt #3: Ok GAT impl (more general)
+// Attempt #3: Ok GAT impl (more general; works for projections to any AsRef<str> regardless of owned (e.g., String) or
+// borrowed (e.g., &String, &str)
 
-trait FieldFamily {
-    type Field<'b>: AsRef<str>;
+/// This trait has two associated types that look similar but are completely different
+///
+/// |                                   | [FieldFamily::UselessLowerKind]   | [FieldFamily::Field]              |
+/// | ---                               | ---                               | ---                               |
+/// | kind | type | lifetime -&gt; type |                                   |                                   |
+/// | to get concrete type, caller ...  | can use directly                  | must supply a lifetime            |
+/// | notation                          | no &lt;...&gt; to left of `:`     | has &lt;...&gt; to left of `:`    |
+/// | dyn compatibility                 | normally no problem               | makes [FieldFamily] _not_ dyn compatible |
+trait FieldFamily<'f> {
+    /// This is a of kind "lifetime -> type" (a higher kind)
+    /// `Field` captures `'c` ... so it lives at most `'c`.
+    /// This is the opposite of [FieldFamily::AnotherUselessLowerKind].
+    type Field<'c>: AsRef<str>;
+
+    /// This is a of kind "type" (a lower kind)
+    type UselessLowerKind: AsRef<str>;
+
+    /// `AnotherUselessLowerKind` lives at least `'f`.
+    /// This is the opposite of [FieldFamily::Field].
+    type AnotherUselessLowerKind: AsRef<str> + 'f;
 }
 
 struct StringFamily;
 struct StringRefFamily;
 struct StrRefFamily;
 
-impl FieldFamily for StringFamily {
-    type Field<'b> = String;
+impl<'f> FieldFamily<'f> for StringFamily {
+    type Field<'c> = String;
+    type UselessLowerKind = String;
+    type AnotherUselessLowerKind = String;
 }
 
-impl FieldFamily for StringRefFamily {
-    type Field<'b> = &'b String;
+impl<'f> FieldFamily<'f> for StringRefFamily {
+    type Field<'c> = &'c String;
+    type UselessLowerKind = String;
+    type AnotherUselessLowerKind = String;
 }
 
-impl FieldFamily for StrRefFamily {
-    type Field<'b> = &'b str;
+impl<'f> FieldFamily<'f> for StrRefFamily {
+    type Field<'c> = &'c str;
+    type UselessLowerKind = String;
+    type AnotherUselessLowerKind = String;
 }
 
-fn get_width<'a, FF: FieldFamily>(
+fn get_width<'a, 'b, FF: FieldFamily<'b>>(
     entries: impl IntoIterator<Item = &'a Entry>,
-    get_field: impl for<'b> Fn(&'b Entry) -> FF::Field<'b>,
+    get_field: impl for<'x> Fn(&'x Entry) -> FF::Field<'x>,
 ) -> usize {
     entries
         .into_iter()
@@ -98,9 +129,9 @@ fn main() {
     // Attempt #3: Ok GAT impl (more general)
 
     let name_width =
-        get_width::<'_, StringRefFamily>(&entries, |entry| /* -> &String */ &entry.name); // ok; closure returns &String
+        get_width::<'_, '_, StringRefFamily>(&entries, |entry| /* -> &String */ &entry.name); // ok; closure returns &String
     let country_width =
-        get_width::<'_, StrRefFamily>(&entries, |entry| /* -> &str */ &*entry.country); // ok; closure returns &str
+        get_width::<'_, '_, StrRefFamily>(&entries, |entry| /* -> &str */ &*entry.country); // ok; closure returns &str
     let age_width =
-        get_width::<'_, StringFamily>(&entries, |entry| /* -> String */ entry.age.to_string()); // ok; closure returns String
+        get_width::<'_, '_, StringFamily>(&entries, |entry| /* -> String */ entry.age.to_string()); // ok; closure returns String
 }
