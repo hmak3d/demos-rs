@@ -4,4 +4,6 @@ version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+futures-util = { workspace = true }
 rand = { workspace = true }
+tokio = { workspace = true }
