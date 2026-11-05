@@ -4,7 +4,9 @@
 //! However, if that function itself uses RPIT for its return value, this doesn't work.
 //! Instead, a Generic Associated Type (GAT) within a trait needs be returned.
 //!
-//! See [GAT RFC 1598](https://rust-lang.github.io/rfcs/1598-generic_associated_types.html)
+//! See
+//! * [GAT RFC 1598](https://rust-lang.github.io/rfcs/1598-generic_associated_types.html)
+//! * this [Rust FAQ](https://github.com/dtolnay/rust-faq/blob/master/README.md#what-are-higher-kinded-types-why-would-i-want-them-and-why-doesnt-rust-have-them)
 
 #[derive(Default)]
 struct Entry {
